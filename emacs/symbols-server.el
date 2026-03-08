@@ -264,41 +264,41 @@ PROJECT-ROOT is prepended to relative file paths from the server."
       (when preview-timer
         (cancel-timer preview-timer)
         (setq preview-timer nil))
-      (pcase action
-        ('preview
-         (when cand
-           (let* ((props (get-text-property 0 'symbols-server--sym cand))
-                  (file-raw (and props (alist-get 'file props)))
-                  (file (if (and project-root file-raw
-                                 (not (file-name-absolute-p file-raw)))
-                            (expand-file-name file-raw project-root)
-                          file-raw))
-                  (line  (and props (alist-get 'line props))))
-             (when (and file line (file-exists-p file))
-               (let ((existing-buf (get-file-buffer file)))
-                 (if existing-buf
-                     (progn
-                       (with-current-buffer existing-buf
-                         (goto-char (point-min))
-                         (forward-line (1- line)))
-                       (set-window-buffer preview-window existing-buf))
-                   (setq preview-timer
-                         (run-with-idle-timer
-                          symbols-server-preview-delay nil
-                          (lambda ()
-                            (when (and (window-live-p preview-window)
-                                       (file-exists-p file))
+      (cond
+       ((eq action 'preview)
+        (when cand
+          (let* ((props (get-text-property 0 'symbols-server--sym cand))
+                 (file-raw (and props (alist-get 'file props)))
+                 (file (if (and project-root file-raw
+                                (not (file-name-absolute-p file-raw)))
+                           (expand-file-name file-raw project-root)
+                         file-raw))
+                 (line  (and props (alist-get 'line props))))
+            (when (and file line (file-exists-p file))
+              (let ((existing-buf (get-file-buffer file)))
+                (if existing-buf
+                    (progn
+                      (with-current-buffer existing-buf
+                        (goto-char (point-min))
+                        (forward-line (1- line)))
+                      (set-window-buffer preview-window existing-buf))
+                  (setq preview-timer
+                        (run-with-idle-timer
+                         symbols-server-preview-delay nil
+                         (lambda ()
+                           (when (and (window-live-p preview-window)
+                                      (file-exists-p file))
                               (let ((buf (find-file-noselect file)))
                                 (with-current-buffer buf
                                   (goto-char (point-min))
                                   (forward-line (1- line)))
-                                (set-window-buffer preview-window buf)))))))))))
-        ('exit
-         ;; Close buffers opened solely for preview
-         (dolist (buf (buffer-list))
-           (unless (memq buf open-buffers)
-             (when (buffer-file-name buf)
-                (kill-buffer buf))))))))))
+                                 (set-window-buffer preview-window buf))))))))))))
+       ((eq action 'exit)
+        ;; Close buffers opened solely for preview
+        (dolist (buf (buffer-list))
+          (unless (memq buf open-buffers)
+            (when (buffer-file-name buf)
+              (kill-buffer buf)))))))))
 
 
 ;; ---------------------------------------------------------------------------
