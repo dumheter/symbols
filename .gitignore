@@ -13,3 +13,6 @@
 *.exe
 *.out
 *.app
+
+# local deploy configuration (machine-specific, not tracked)
+emacs/deploy.local

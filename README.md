@@ -66,13 +66,14 @@ symbols/
 └── README.md             This file
 ```
 
-Emacs client lives outside the repo:
+Emacs client lives in the repo and is deployed to `.emacs.d`:
 
 ```
-~/.emacs.d/
-├── symbols-server.el   Emacs client — process management + consult UI
-├── treesit-utils.el    Legacy in-process scanner (kept as fallback)
-└── init.el             Loads symbols-server.el, binds M-s M-s
+emacs/
+├── symbols-server.el      Emacs client — process management + consult UI
+├── deploy.py              Copies symbols-server.el to the local .emacs.d
+├── deploy.local.example   Template for the deploy target path
+└── deploy.local           Your machine-specific target (not tracked by git)
 ```
 
 ---
@@ -147,6 +148,29 @@ All communication is line-delimited JSON on stdin/stdout.
 
 `score` is the fuzzy-match score: exact name match = 1000, prefix = 500+,
 subsequence with word-boundary bonuses = lower values.
+
+---
+
+## Emacs client — deploy workflow
+
+`emacs/symbols-server.el` is the canonical source.  After every edit to it,
+run the deploy script to copy it into your local `.emacs.d`:
+
+```bash
+python emacs/deploy.py
+```
+
+The destination directory is read from `emacs/deploy.local` (not tracked by
+git, so it stays machine-specific).  On first use:
+
+```bash
+cp emacs/deploy.local.example emacs/deploy.local
+# edit deploy.local and set your .emacs.d path, e.g.:
+#   C:/Users/you/AppData/Roaming/.emacs.d
+```
+
+Then reload the file in Emacs (`M-x load-file RET ... symbols-server.el RET`)
+or restart Emacs.
 
 ---
 

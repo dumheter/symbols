@@ -7,6 +7,21 @@ See `README.md` for a full project overview, protocol docs, and Emacs usage.
 
 ---
 
+## Emacs Client — Deploy After Every Edit
+
+`emacs/symbols-server.el` is the canonical source tracked in this repo.
+**After every change to it you must run the deploy script** to copy it to the
+local `.emacs.d` where Emacs actually loads it from:
+
+```bash
+python emacs/deploy.py
+```
+
+The destination is configured in `emacs/deploy.local` (machine-specific, not
+tracked by git).  See `emacs/deploy.local.example` for the format.
+
+---
+
 ## Build Commands
 
 ```bash
