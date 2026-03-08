@@ -75,50 +75,48 @@
   "Handle STRING received from PROC."
   (let* ((root (process-get proc 'project-root))
          (state (gethash root symbols-server--servers)))
-    (unless state
-      (message "symbols-server: received data for unknown project %s" root)
-      (cl-return-from symbols-server--process-filter))
-    ;; Accumulate partial line
-    (let ((buf (concat (or (symbols-server--state-partial state) "") string)))
-      (setf (symbols-server--state-partial state) buf)
-      ;; Process all complete lines
-      (let ((start 0))
-        (while (string-match "\n" buf start)
-          (let* ((end (match-beginning 0))
-                 (line (substring buf start end)))
-            (setq start (match-end 0))
-            (symbols-server--handle-line state line)))
-        ;; Keep any remaining partial data
-        (setf (symbols-server--state-partial state) (substring buf start))))))
+    (if (not state)
+        (message "symbols-server: received data for unknown project %s" root)
+      ;; Accumulate partial line
+      (let ((buf (concat (or (symbols-server--state-partial state) "") string)))
+        (setf (symbols-server--state-partial state) buf)
+        ;; Process all complete lines
+        (let ((start 0))
+          (while (string-match "\n" buf start)
+            (let* ((end (match-beginning 0))
+                   (line (substring buf start end)))
+              (setq start (match-end 0))
+              (symbols-server--handle-line state line)))
+          ;; Keep any remaining partial data
+          (setf (symbols-server--state-partial state) (substring buf start)))))))
 
 (defun symbols-server--handle-line (state line)
   "Parse one complete JSON LINE and dispatch to the right callback."
   (when (string-prefix-p "\r" line)
     (setq line (substring line 1)))
-  (when (string= line "")
-    (cl-return-from symbols-server--handle-line))
-  (condition-case err
-      (let* ((obj (json-parse-string line :object-type 'alist :null-object nil))
-             (id  (alist-get 'id obj)))
-        (cond
-         ;; id:0 is the startup ready notification
-         ((equal id 0)
-          (setf (symbols-server--state-ready state) t)
-          (let ((files   (alist-get 'files   obj))
-                (symbols (alist-get 'symbols obj)))
-            (message "symbols-server: ready (%s files, %s symbols)"
-                     (or files "?") (or symbols "?"))))
-         ;; Any other id: look up and call the registered callback
-         (t
-          (let* ((pending (symbols-server--state-pending state))
-                 (entry   (assoc id pending)))
-            (when entry
-              (setf (symbols-server--state-pending state)
-                    (cl-remove id pending :key #'car :test #'equal))
-              (funcall (cdr entry) obj))))))
-    (error
-     (message "symbols-server: error parsing response: %s | line: %s"
-              (error-message-string err) line))))
+  (unless (string= line "")
+    (condition-case err
+        (let* ((obj (json-parse-string line :object-type 'alist :null-object nil))
+               (id  (alist-get 'id obj)))
+          (cond
+           ;; id:0 is the startup ready notification
+           ((equal id 0)
+            (setf (symbols-server--state-ready state) t)
+            (let ((files   (alist-get 'files   obj))
+                  (symbols (alist-get 'symbols obj)))
+              (message "symbols-server: ready (%s files, %s symbols)"
+                       (or files "?") (or symbols "?"))))
+           ;; Any other id: look up and call the registered callback
+           (t
+            (let* ((pending (symbols-server--state-pending state))
+                   (entry   (assoc id pending)))
+              (when entry
+                (setf (symbols-server--state-pending state)
+                      (cl-remove id pending :key #'car :test #'equal))
+                (funcall (cdr entry) obj))))))
+      (error
+       (message "symbols-server: error parsing response: %s | line: %s"
+                (error-message-string err) line)))))
 
 (defun symbols-server--process-sentinel (proc event)
   "Handle PROC lifecycle EVENT."
@@ -238,11 +236,16 @@ Returns non-nil if the server became ready."
 ;; ---------------------------------------------------------------------------
 ;; Navigation / preview (mirrors treesit-utils behavior)
 
-(defun symbols-server--goto-sym (sym)
-  "Navigate to the location of SYM (an alist from the server response)."
+(defun symbols-server--goto-sym (sym &optional project-root)
+  "Navigate to the location of SYM (an alist from the server response).
+PROJECT-ROOT, if non-nil, is prepended to relative file paths."
   (when sym
-    (let ((file (alist-get 'file sym))
-          (line (alist-get 'line sym)))
+    (let* ((file-raw (alist-get 'file sym))
+           (file (if (and project-root file-raw
+                          (not (file-name-absolute-p file-raw)))
+                     (expand-file-name file-raw project-root)
+                   file-raw))
+           (line (alist-get 'line sym)))
       (when (and file line (file-exists-p file))
         (xref-push-marker-stack)
         (find-file file)
@@ -250,8 +253,9 @@ Returns non-nil if the server became ready."
         (forward-line (1- line))
         (recenter)))))
 
-(defun symbols-server--make-state-fn ()
-  "Return a consult state function for preview/navigation."
+(defun symbols-server--make-state-fn (project-root)
+  "Return a consult state function for preview/navigation.
+PROJECT-ROOT is prepended to relative file paths from the server."
   (let ((open-buffers (buffer-list))
         (preview-window (selected-window))
         (preview-timer nil))
@@ -264,7 +268,11 @@ Returns non-nil if the server became ready."
         ('preview
          (when cand
            (let* ((props (get-text-property 0 'symbols-server--sym cand))
-                  (file  (and props (alist-get 'file props)))
+                  (file-raw (and props (alist-get 'file props)))
+                  (file (if (and project-root file-raw
+                                 (not (file-name-absolute-p file-raw)))
+                            (expand-file-name file-raw project-root)
+                          file-raw))
                   (line  (and props (alist-get 'line props))))
              (when (and file line (file-exists-p file))
                (let ((existing-buf (get-file-buffer file)))
@@ -284,13 +292,14 @@ Returns non-nil if the server became ready."
                                 (with-current-buffer buf
                                   (goto-char (point-min))
                                   (forward-line (1- line)))
-                                (set-window-buffer preview-window buf))))))))))
+                                (set-window-buffer preview-window buf)))))))))))
         ('exit
          ;; Close buffers opened solely for preview
          (dolist (buf (buffer-list))
            (unless (memq buf open-buffers)
              (when (buffer-file-name buf)
-               (kill-buffer buf)))))))))))
+                (kill-buffer buf))))))))))
+
 
 ;; ---------------------------------------------------------------------------
 ;; Consult async source
@@ -361,7 +370,8 @@ With prefix argument FORCE-REBUILD, trigger an index rebuild first."
                          (symbols-server--send-rebuild state)
                          ;; Give it a moment so the rebuild ack comes back before we query
                          (sit-for 0.5))))
-    (let* ((selected
+    (let* ((last-candidates nil)
+           (selected
             (consult--read
              (consult--dynamic-collection
               (lambda (input)
@@ -387,15 +397,21 @@ With prefix argument FORCE-REBUILD, trigger an index rebuild first."
                     (let ((deadline (+ (float-time) 3.0)))
                       (while (and (not done) (< (float-time) deadline))
                         (accept-process-output (symbols-server--state-process state) 0.05)))
+                    (setq last-candidates results)
                     results))))
              :prompt "C++ Symbol: "
              :category 'cpp-symbol
-             :state (symbols-server--make-state-fn)
+             :state (symbols-server--make-state-fn project-root)
+             :lookup (lambda (selected _candidates _input _narrow)
+                       ;; Find the original candidate string that carries the text property.
+                       ;; consult may return a string copy without it, so search by display text.
+                       (or (cl-find selected last-candidates :test #'string=)
+                           selected))
              :require-match t
              :sort nil)))
       (when selected
         (let ((sym (get-text-property 0 'symbols-server--sym selected)))
-          (symbols-server--goto-sym sym))))))
+          (symbols-server--goto-sym sym project-root))))))
 
 ;;;###autoload
 (defun symbols-server-shutdown (&optional project-root)
