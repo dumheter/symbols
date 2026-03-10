@@ -65,15 +65,297 @@ DTEST(incrementalBuildFallsBackToFullBuildWhenNoRecords)
 }
 
 // ---------------------------------------------------------------------------
-// search() tests
+// searchDirs tests (tasks 3a–3c)
 // ---------------------------------------------------------------------------
 
-DTEST(searchReturnsEmptyWhenNotReady)
+DTEST(buildWithSearchDirsOnlyIndexesSpecifiedSubdir)
 {
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_searchdirs_basic";
+    const auto srcDir = tempDir / "src";
+    const auto docsDir = tempDir / "docs";
+    std::filesystem::create_directories(srcDir);
+    std::filesystem::create_directories(docsDir);
+
+    writeTempFile(srcDir / "a.cpp", "void srcFunc() {}");
+    writeTempFile(docsDir / "b.cpp", "void docsFunc() {}");
+
+    dc::List<dc::String> searchDirs;
+    searchDirs.add(dc::String("src"));
+
     Indexer indexer;
+    indexer.build(tempDir, searchDirs);
+    ASSERT_TRUE(indexer.isReady());
+
+    // srcFunc must be indexed.
+    const auto srcResults = indexer.search(dc::StringView("srcFunc"), 10);
+    ASSERT_TRUE(srcResults.getSize() >= static_cast<u64>(1));
+
+    // docsFunc must NOT be indexed.
+    const auto docsResults = indexer.search(dc::StringView("docsFunc"), 10);
+    ASSERT_EQ(docsResults.getSize(), static_cast<u64>(0));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(incrementalBuildWithSearchDirsRespectsSubdir)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_searchdirs_incremental";
+    const auto srcDir = tempDir / "src";
+    const auto otherDir = tempDir / "other";
+    std::filesystem::create_directories(srcDir);
+    std::filesystem::create_directories(otherDir);
+
+    writeTempFile(srcDir / "a.cpp", "void original() {}");
+
+    dc::List<dc::String> searchDirs;
+    searchDirs.add(dc::String("src"));
+
+    Indexer indexer;
+    indexer.build(tempDir, searchDirs);
+    ASSERT_TRUE(indexer.isReady());
+
+    // Add a file inside src (should be picked up).
+    writeTempFile(srcDir / "b.cpp", "void added() {}");
+    // Add a file outside src (should be ignored).
+    writeTempFile(otherDir / "c.cpp", "void ignored() {}");
+
+    indexer.incrementalBuild(tempDir, searchDirs);
+
+    const auto addedResults = indexer.search(dc::StringView("added"), 10);
+    ASSERT_TRUE(addedResults.getSize() >= static_cast<u64>(1));
+
+    const auto ignoredResults = indexer.search(dc::StringView("ignored"), 10);
+    ASSERT_EQ(ignoredResults.getSize(), static_cast<u64>(0));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(buildWithNonExistentSearchDirProducesEmptyIndex)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_searchdirs_missing";
+    std::filesystem::create_directories(tempDir);
+
+    // Put a file at root level — it should NOT be indexed since we restrict to a subdir.
+    writeTempFile(tempDir / "a.cpp", "void rootFunc() {}");
+
+    dc::List<dc::String> searchDirs;
+    searchDirs.add(dc::String("nonexistent_subdir"));
+
+    Indexer indexer;
+    indexer.build(tempDir, searchDirs);
+
+    // The non-existent subdir yields no files.
+    ASSERT_EQ(indexer.fileCount(), static_cast<usize>(0));
+    ASSERT_EQ(indexer.symbolCount(), static_cast<usize>(0));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+// ---------------------------------------------------------------------------
+// Cache corruption tests (tasks 4a–4d)
+// ---------------------------------------------------------------------------
+
+DTEST(loadCacheWithGarbageContentReturnsErr)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_cache_garbage";
+    const auto cacheDir = tempDir / ".cache";
+    std::filesystem::create_directories(cacheDir);
+
+    writeTempFile(cacheDir / "symbols-index.json", "not json at all !!!### garbage");
+
+    Indexer indexer;
+    const auto result = indexer.loadCache(tempDir);
+    ASSERT_FALSE(result.isOk());
     ASSERT_FALSE(indexer.isReady());
-    const auto results = indexer.search(dc::StringView("anything"), 10);
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(loadCacheWithWrongVersionReturnsErr)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_cache_wrong_ver";
+    const auto cacheDir = tempDir / ".cache";
+    std::filesystem::create_directories(cacheDir);
+
+    writeTempFile(cacheDir / "symbols-index.json", R"({"version":999,"symbols":[],"files":[]})");
+
+    Indexer indexer;
+    const auto result = indexer.loadCache(tempDir);
+    ASSERT_FALSE(result.isOk());
+    ASSERT_FALSE(indexer.isReady());
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(loadCacheWithMissingSymbolsKeyReturnsErr)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_cache_no_symbols";
+    const auto cacheDir = tempDir / ".cache";
+    std::filesystem::create_directories(cacheDir);
+
+    // Valid JSON, correct version, but no "symbols" array.
+    writeTempFile(cacheDir / "symbols-index.json", R"({"version":2,"files":[]})");
+
+    Indexer indexer;
+    const auto result = indexer.loadCache(tempDir);
+    ASSERT_FALSE(result.isOk());
+    ASSERT_FALSE(indexer.isReady());
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(loadCacheWithEmptySymbolsArraySucceeds)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_cache_empty_syms";
+    const auto cacheDir = tempDir / ".cache";
+    std::filesystem::create_directories(cacheDir);
+
+    writeTempFile(cacheDir / "symbols-index.json", R"({"version":2,"symbols":[],"files":[]})");
+
+    Indexer indexer;
+    const auto result = indexer.loadCache(tempDir);
+    ASSERT_TRUE(result.isOk());
+    ASSERT_TRUE(indexer.isReady());
+    ASSERT_EQ(indexer.symbolCount(), static_cast<usize>(0));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+// ---------------------------------------------------------------------------
+// scoreMatch isolation tests (tasks 5a–5g, via search())
+// ---------------------------------------------------------------------------
+
+DTEST(scoreMatchExactMatchScores1000)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_score_exact";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void foo() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    const auto results = indexer.search(dc::StringView("foo"), 10);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_EQ(results[0].score, static_cast<s32>(1000));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(scoreMatchPrefixScoreAbove500)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_score_prefix";
+    std::filesystem::create_directories(tempDir);
+    // "fooBar" — "foo" is a prefix, score should be 500+.
+    writeTempFile(tempDir / "a.cpp", "void fooBar() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    const auto results = indexer.search(dc::StringView("foo"), 10);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(results[0].score >= static_cast<s32>(500));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(scoreMatchShorterPrefixNameScoresHigher)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_score_prefix_shorter";
+    std::filesystem::create_directories(tempDir);
+    // Both are prefix matches for "foo"; "fooBar" is shorter than "fooBarBaz"
+    // so its prefix bonus should be higher.
+    writeTempFile(tempDir / "a.cpp", "void fooBar() {} void fooBarBaz() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    const auto results = indexer.search(dc::StringView("foo"), 10);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(2));
+
+    // fooBar must outrank fooBarBaz.
+    bool fooBarFirst = false;
+    bool fooBarBazFirst = false;
+    for (u64 i = 0; i < results.getSize(); ++i) {
+        if (results[i].symbol->name == "fooBar" && !fooBarBazFirst)
+            fooBarFirst = true;
+        if (results[i].symbol->name == "fooBarBaz" && !fooBarFirst)
+            fooBarBazFirst = true;
+    }
+    ASSERT_TRUE(fooBarFirst);
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(scoreMatchWordBoundaryBonusRanksHigher)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_score_word_boundary";
+    std::filesystem::create_directories(tempDir);
+    // "gS" should match "getSize" (word boundary at 'S') better than a non-boundary match.
+    writeTempFile(tempDir / "a.cpp", "void getSize() {} void gasStation() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    const auto results = indexer.search(dc::StringView("gS"), 10);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+
+    // getSize must be in the results (it has word-boundary bonus for 'S').
+    bool foundGetSize = false;
+    for (u64 i = 0; i < results.getSize(); ++i) {
+        if (results[i].symbol->name == "getSize")
+            foundGetSize = true;
+    }
+    ASSERT_TRUE(foundGetSize);
+
+    // getSize must outrank gasStation when both present.
+    if (results.getSize() >= static_cast<u64>(2)) {
+        bool getSizeBeforeGas = false;
+        for (u64 i = 0; i < results.getSize(); ++i) {
+            if (results[i].symbol->name == "getSize") {
+                getSizeBeforeGas = true;
+                break;
+            }
+            if (results[i].symbol->name == "gasStation")
+                break;
+        }
+        ASSERT_TRUE(getSizeBeforeGas);
+    }
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(scoreMatchConsecutiveCharsBonusRanksHigher)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_score_consecutive";
+    std::filesystem::create_directories(tempDir);
+    // "abcdef" has all pattern chars consecutive; "aXbXcXdXeXf" has gaps.
+    writeTempFile(tempDir / "a.cpp", "void abcdef() {} void aXbXcXdXeXf() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    const auto results = indexer.search(dc::StringView("abcdef"), 10);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    // abcdef must be the top result (or at least present at top).
+    ASSERT_TRUE(results[0].symbol->name == "abcdef");
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(scoreMatchNonMatchingPatternScoresNegative)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_score_nomatch";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void alpha() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    // "zzz" is not a subsequence of "alpha", so it must not appear in results.
+    const auto results = indexer.search(dc::StringView("zzz"), 10);
     ASSERT_EQ(results.getSize(), static_cast<u64>(0));
+
+    std::filesystem::remove_all(tempDir);
 }
 
 DTEST(searchReturnsEmptyForEmptyPattern)

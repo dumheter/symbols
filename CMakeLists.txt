@@ -105,6 +105,7 @@ add_executable(test
     tests/indexer.test.cpp
     tests/scanner.test.cpp
     tests/protocol.test.cpp
+    tests/server.test.cpp
     src/scanner.cpp
     src/parser.cpp
     src/indexer.cpp

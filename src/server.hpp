@@ -4,7 +4,11 @@
 #include <dc/string.hpp>
 #include <dc/types.hpp>
 
+#include <indexer.hpp>
+#include <protocol.hpp>
+
 #include <filesystem>
+#include <ostream>
 
 namespace symbols {
 
@@ -14,6 +18,18 @@ struct ServerConfig {
     dc::List<dc::String> searchDirs;
     bool useCache = true;
 };
+
+/// Initialize the indexer: load from cache or perform a fresh build.
+/// Exposed for testing.
+auto initializeIndex(Indexer& indexer, const ServerConfig& config) -> void;
+
+/// Handle a single parsed request and return a JSON response string.
+/// Exposed for testing.
+[[nodiscard]] auto handleRequest(const Request& req, Indexer& indexer, const ServerConfig& config) -> dc::String;
+
+/// Send a JSON response to the given output stream (one line + flush).
+/// Exposed for testing.
+auto sendResponse(std::ostream& out, const dc::String& json) -> void;
 
 /// Run the symbol server.
 /// Reads JSON requests from stdin, writes JSON responses to stdout.

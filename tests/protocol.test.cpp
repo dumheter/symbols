@@ -176,3 +176,26 @@ DTEST(buildErrorResponseFields)
     // Error response must NOT have a "status" field.
     ASSERT_TRUE(val.get("status") == nullptr);
 }
+
+// ---------------------------------------------------------------------------
+// Edge cases (tasks 8a–8b)
+// ---------------------------------------------------------------------------
+
+DTEST(parseRequestNegativeLimitFallsBackToDefault)
+{
+    // limit:-5 is <= 0, so the default of 200 must be used.
+    auto result = parseRequest(dc::StringView(R"({"id":1,"method":"query","params":{"pattern":"X","limit":-5}})"));
+    ASSERT_TRUE(result.isOk());
+    auto req = dc::move(result).unwrap();
+    ASSERT_EQ(req.limit, static_cast<s64>(200));
+}
+
+DTEST(parseRequestNegativeIdIsPreserved)
+{
+    // Negative id values are valid and must be preserved as-is.
+    auto result = parseRequest(dc::StringView(R"({"id":-42,"method":"status"})"));
+    ASSERT_TRUE(result.isOk());
+    auto req = dc::move(result).unwrap();
+    ASSERT_EQ(req.id, static_cast<s64>(-42));
+    ASSERT_EQ(req.method, Method::Status);
+}

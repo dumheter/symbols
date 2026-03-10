@@ -218,3 +218,139 @@ DTEST(jsonGetStringMissingKeyReturnsEmpty)
     const auto val = dc::move(result).unwrap();
     ASSERT_EQ(val.getString("missing").getSize(), static_cast<usize>(0));
 }
+
+// ---------------------------------------------------------------------------
+// \uXXXX unicode escape replacement (task 6a)
+// ---------------------------------------------------------------------------
+
+DTEST(jsonParseUnicodeEscapeReplacedWithQuestionMark)
+{
+    // The parser stubs \uXXXX as "?" — verify that behaviour.
+    auto result = JsonValue::parse(dc::StringView(R"({"val":"\u0041"})"));
+    ASSERT_TRUE(result.isOk());
+    const auto val = dc::move(result).unwrap();
+    // \u0041 is 'A' but the parser substitutes '?'.
+    ASSERT_TRUE(dc::String(val.getString("val")) == "?");
+}
+
+// ---------------------------------------------------------------------------
+// Float / decimal truncation (task 6b)
+// ---------------------------------------------------------------------------
+
+DTEST(jsonParseDecimalNumberTruncatesToInteger)
+{
+    auto result = JsonValue::parse(dc::StringView(R"({"x":3.14})"));
+    ASSERT_TRUE(result.isOk());
+    const auto val = dc::move(result).unwrap();
+    // The parser reads s64 via atoll — fractional part is silently truncated.
+    ASSERT_EQ(val.getNumber("x"), static_cast<s64>(3));
+}
+
+DTEST(jsonParseNegativeDecimalTruncatesToInteger)
+{
+    auto result = JsonValue::parse(dc::StringView(R"({"x":-9.99})"));
+    ASSERT_TRUE(result.isOk());
+    const auto val = dc::move(result).unwrap();
+    ASSERT_EQ(val.getNumber("x"), static_cast<s64>(-9));
+}
+
+// ---------------------------------------------------------------------------
+// jsonEscapeString — full coverage of all 7 escape sequences (task 6c)
+// ---------------------------------------------------------------------------
+
+DTEST(jsonEscapeStringEscapesBackspace)
+{
+    const dc::String input("\b");
+    const dc::String escaped = jsonEscapeString(dc::StringView(input));
+    ASSERT_TRUE(escaped == "\\b");
+}
+
+DTEST(jsonEscapeStringEscapesFormFeed)
+{
+    const dc::String input("\f");
+    const dc::String escaped = jsonEscapeString(dc::StringView(input));
+    ASSERT_TRUE(escaped == "\\f");
+}
+
+DTEST(jsonEscapeStringEscapesCarriageReturn)
+{
+    const dc::String input("\r");
+    const dc::String escaped = jsonEscapeString(dc::StringView(input));
+    ASSERT_TRUE(escaped == "\\r");
+}
+
+DTEST(jsonEscapeStringEscapesBackslash)
+{
+    const dc::String input("\\");
+    const dc::String escaped = jsonEscapeString(dc::StringView(input));
+    ASSERT_TRUE(escaped == "\\\\");
+}
+
+DTEST(jsonEscapeStringEscapesAllSevenChars)
+{
+    // Build a string containing all 7 special chars and verify the escaped
+    // version has the right length (each single char becomes a 2-char sequence).
+    const dc::String input("\"\\\b\f\n\r\t");
+    const dc::String escaped = jsonEscapeString(dc::StringView(input));
+    // 7 input chars → 14 output chars.
+    ASSERT_EQ(escaped.getSize(), static_cast<usize>(14));
+}
+
+// ---------------------------------------------------------------------------
+// JsonValue copy constructor (task 6d)
+// ---------------------------------------------------------------------------
+
+DTEST(jsonValueCopyConstructorProducesIndependentCopy)
+{
+    auto original = JsonValue::makeObject();
+    original.set(dc::String("key"), JsonValue::makeNumber(42));
+
+    // Copy-construct.
+    const JsonValue copy(original);
+    ASSERT_EQ(copy.getNumber("key"), static_cast<s64>(42));
+
+    // Mutate the copy — original must be unaffected.
+    // (We can only verify via serialise/re-parse since set() modifies in place.)
+    original.set(dc::String("key"), JsonValue::makeNumber(99));
+    ASSERT_EQ(original.getNumber("key"), static_cast<s64>(99));
+    ASSERT_EQ(copy.getNumber("key"), static_cast<s64>(42));
+}
+
+DTEST(jsonValueCopyConstructorCopiesArray)
+{
+    auto original = JsonValue::makeArray();
+    original.pushBack(JsonValue::makeNumber(1));
+    original.pushBack(JsonValue::makeNumber(2));
+
+    const JsonValue copy(original);
+    ASSERT_EQ(copy.arraySize(), static_cast<usize>(2));
+    ASSERT_EQ(copy.at(0).asNumber(), static_cast<s64>(1));
+    ASSERT_EQ(copy.at(1).asNumber(), static_cast<s64>(2));
+}
+
+// ---------------------------------------------------------------------------
+// JsonValue copy assignment (task 6e)
+// ---------------------------------------------------------------------------
+
+DTEST(jsonValueCopyAssignmentOverwritesExistingValue)
+{
+    auto obj = JsonValue::makeObject();
+    obj.set(dc::String("x"), JsonValue::makeNumber(7));
+
+    // Assign a Number over the Object.
+    const JsonValue num = JsonValue::makeNumber(55);
+    obj = num;
+
+    ASSERT_EQ(obj.type(), JsonValue::Type::Number);
+    ASSERT_EQ(obj.asNumber(), static_cast<s64>(55));
+}
+
+DTEST(jsonValueCopyAssignmentSelfAssignIsNoop)
+{
+    auto val = JsonValue::makeNumber(123);
+    // Self-assignment must not corrupt the object.
+    // Use a reference to avoid the -Wself-assign compiler warning.
+    JsonValue& ref = val;
+    val = ref;
+    ASSERT_EQ(val.asNumber(), static_cast<s64>(123));
+}

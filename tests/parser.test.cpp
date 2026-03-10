@@ -397,3 +397,55 @@ class Widget {
     ASSERT_TRUE(foundDraw);
     ASSERT_TRUE(foundGetWidth);
 }
+
+// ---------------------------------------------------------------------------
+// stringToSymbolKind fallback (tasks 7a–7b)
+// ---------------------------------------------------------------------------
+
+DTEST(stringToSymbolKindUnknownStringFallsBackToFunction)
+{
+    // Any string that is not a known kind name must return Function (documented fallback).
+    ASSERT_EQ(stringToSymbolKind(dc::StringView("garbage_xyz")), SymbolKind::Function);
+    ASSERT_EQ(stringToSymbolKind(dc::StringView("CLASS")), SymbolKind::Function); // wrong case
+    ASSERT_EQ(stringToSymbolKind(dc::StringView("STRUCT")), SymbolKind::Function);
+}
+
+DTEST(stringToSymbolKindEmptyStringFallsBackToFunction)
+{
+    ASSERT_EQ(stringToSymbolKind(dc::StringView("")), SymbolKind::Function);
+}
+
+// ---------------------------------------------------------------------------
+// Parser move constructor (task 7c)
+// ---------------------------------------------------------------------------
+
+DTEST(parserMoveConstructorAllowsParsingAfterMove)
+{
+    const auto tempDir = std::filesystem::temp_directory_path();
+    const auto tempFile = tempDir / "symbols_test_move_parser.cpp";
+    {
+        dc::File file;
+        auto openResult = file.open(dc::String(tempFile.string().c_str()), dc::File::Mode::kWrite);
+        if (openResult.isOk()) {
+            [[maybe_unused]] auto wr = file.write(dc::String("void movedParserFunc() {}"));
+        }
+    }
+
+    Parser original;
+    Parser moved(dc::move(original));
+
+    auto result = moved.parseFile(tempFile, tempDir);
+    std::filesystem::remove(tempFile);
+
+    ASSERT_TRUE(result.isOk());
+    const auto syms = dc::move(result).unwrap();
+
+    bool found = false;
+    for (u64 i = 0; i < syms.getSize(); ++i) {
+        if (syms[i].name == "movedParserFunc") {
+            found = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(found);
+}
