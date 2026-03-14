@@ -97,6 +97,39 @@ auto initializeIndex(Indexer& indexer, const ServerConfig& config) -> void
     }
 }
 
+auto runServerLoop(std::istream& in, std::ostream& out, Indexer& indexer, const ServerConfig& config) -> s32
+{
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty())
+            continue;
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (line.empty())
+            continue;
+
+        const dc::StringView lineView(line.c_str(), static_cast<u64>(line.size()));
+        auto reqResult = parseRequest(lineView);
+        if (!reqResult.isOk()) {
+            LOG_WARNING("Failed to parse request: {}", dc::move(reqResult).unwrapErr().c_str());
+            sendResponse(out, buildErrorResponse(0, "Failed to parse request"));
+            continue;
+        }
+
+        const Request req = dc::move(reqResult).unwrap();
+        if (req.method == Method::Shutdown) {
+            sendResponse(out, handleRequest(req, indexer, config));
+            LOG_INFO("Shutdown requested, exiting");
+            break;
+        }
+
+        sendResponse(out, handleRequest(req, indexer, config));
+    }
+
+    LOG_INFO("Symbol server exiting");
+    return 0;
+}
+
 auto runServer(const ServerConfig& config) -> s32
 {
 #ifdef _WIN32
@@ -113,35 +146,7 @@ auto runServer(const ServerConfig& config) -> s32
         buildStatusResponse(
             0, "ready", static_cast<s64>(indexer.fileCount()), static_cast<s64>(indexer.symbolCount())));
 
-    std::string line;
-    while (std::getline(std::cin, line)) {
-        if (line.empty())
-            continue;
-        if (!line.empty() && line.back() == '\r')
-            line.pop_back();
-        if (line.empty())
-            continue;
-
-        const dc::StringView lineView(line.c_str(), static_cast<u64>(line.size()));
-        auto reqResult = parseRequest(lineView);
-        if (!reqResult.isOk()) {
-            LOG_WARNING("Failed to parse request: {}", dc::move(reqResult).unwrapErr().c_str());
-            sendResponse(std::cout, buildErrorResponse(0, "Failed to parse request"));
-            continue;
-        }
-
-        const Request req = dc::move(reqResult).unwrap();
-        if (req.method == Method::Shutdown) {
-            sendResponse(std::cout, handleRequest(req, indexer, config));
-            LOG_INFO("Shutdown requested, exiting");
-            break;
-        }
-
-        sendResponse(std::cout, handleRequest(req, indexer, config));
-    }
-
-    LOG_INFO("Symbol server exiting");
-    return 0;
+    return runServerLoop(std::cin, std::cout, indexer, config);
 }
 
 } // namespace symbols

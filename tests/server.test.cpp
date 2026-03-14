@@ -440,3 +440,174 @@ DTEST(handleRequestRebuildSavesCacheWhenEnabled)
 
     std::filesystem::remove_all(tempDir);
 }
+
+// ---------------------------------------------------------------------------
+// runServerLoop integration tests
+// ---------------------------------------------------------------------------
+
+DTEST(runServerLoopRespondsToQuery)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_loop_query";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void loopFunc() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    ServerConfig config;
+    config.projectRoot = tempDir;
+    config.useCache = false;
+
+    std::istringstream in(R"({"id":1,"method":"query","params":{"pattern":"loopFunc","limit":10}})"
+                          "\n");
+    std::ostringstream out;
+
+    const s32 ret = runServerLoop(in, out, indexer, config);
+    ASSERT_EQ(ret, static_cast<s32>(0));
+
+    // Parse the response line.
+    auto parseResult = JsonValue::parse(dc::StringView(out.str().c_str(), static_cast<u64>(out.str().size())));
+    ASSERT_TRUE(parseResult.isOk());
+    const auto val = dc::move(parseResult).unwrap();
+
+    ASSERT_EQ(val.getNumber("id"), static_cast<s64>(1));
+    const JsonValue* syms = val.get("symbols");
+    ASSERT_TRUE(syms != nullptr);
+    ASSERT_TRUE(syms->arraySize() >= static_cast<usize>(1));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(runServerLoopRespondsToStatus)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_loop_status";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void statusFunc() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    ServerConfig config;
+    config.projectRoot = tempDir;
+    config.useCache = false;
+
+    std::istringstream in(R"({"id":2,"method":"status"})"
+                          "\n");
+    std::ostringstream out;
+
+    [[maybe_unused]] const auto ret = runServerLoop(in, out, indexer, config);
+
+    auto parseResult = JsonValue::parse(dc::StringView(out.str().c_str(), static_cast<u64>(out.str().size())));
+    ASSERT_TRUE(parseResult.isOk());
+    const auto val = dc::move(parseResult).unwrap();
+
+    ASSERT_EQ(val.getNumber("id"), static_cast<s64>(2));
+    ASSERT_TRUE(dc::String(val.getString("status")) == "ready");
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(runServerLoopShutdownExitsLoop)
+{
+    Indexer indexer;
+
+    ServerConfig config;
+    config.projectRoot = std::filesystem::temp_directory_path();
+    config.useCache = false;
+
+    std::istringstream in(R"({"id":99,"method":"shutdown"})"
+                          "\n");
+    std::ostringstream out;
+
+    const s32 ret = runServerLoop(in, out, indexer, config);
+    ASSERT_EQ(ret, static_cast<s32>(0));
+
+    auto parseResult = JsonValue::parse(dc::StringView(out.str().c_str(), static_cast<u64>(out.str().size())));
+    ASSERT_TRUE(parseResult.isOk());
+    const auto val = dc::move(parseResult).unwrap();
+
+    ASSERT_EQ(val.getNumber("id"), static_cast<s64>(99));
+    ASSERT_TRUE(dc::String(val.getString("status")) == "shutdown");
+}
+
+DTEST(runServerLoopEofExits)
+{
+    // Empty input → immediate EOF → loop exits cleanly.
+    Indexer indexer;
+
+    ServerConfig config;
+    config.projectRoot = std::filesystem::temp_directory_path();
+    config.useCache = false;
+
+    std::istringstream in("");
+    std::ostringstream out;
+
+    const s32 ret = runServerLoop(in, out, indexer, config);
+    ASSERT_EQ(ret, static_cast<s32>(0));
+    // No response written for empty input.
+    ASSERT_TRUE(out.str().empty());
+}
+
+DTEST(runServerLoopSkipsBlankLines)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_loop_blank";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void blankLineFunc() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    ServerConfig config;
+    config.projectRoot = tempDir;
+    config.useCache = false;
+
+    // Two blank lines (one with CR), then a real query, then shutdown.
+    std::istringstream in("\r\n"
+                          "\n"
+                          R"({"id":3,"method":"query","params":{"pattern":"blankLineFunc","limit":10}})"
+                          "\n"
+                          R"({"id":4,"method":"shutdown"})"
+                          "\n");
+    std::ostringstream out;
+
+    [[maybe_unused]] const auto ret2 = runServerLoop(in, out, indexer, config);
+
+    // Output should contain exactly two response lines.
+    const std::string output = out.str();
+    u64 lineCount = 0;
+    for (const char c : output) {
+        if (c == '\n')
+            ++lineCount;
+    }
+    ASSERT_EQ(lineCount, static_cast<u64>(2));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(runServerLoopReturnsErrorOnBadJson)
+{
+    Indexer indexer;
+
+    ServerConfig config;
+    config.projectRoot = std::filesystem::temp_directory_path();
+    config.useCache = false;
+
+    // First line is bad JSON, second is shutdown so the loop terminates.
+    std::istringstream in("not valid json at all\n"
+                          R"({"id":5,"method":"shutdown"})"
+                          "\n");
+    std::ostringstream out;
+
+    [[maybe_unused]] const auto ret3 = runServerLoop(in, out, indexer, config);
+
+    // First response must be an error.
+    const std::string output = out.str();
+    const auto firstNewline = output.find('\n');
+    ASSERT_TRUE(firstNewline != std::string::npos);
+
+    const std::string firstLine = output.substr(0, firstNewline);
+    auto parseResult = JsonValue::parse(dc::StringView(firstLine.c_str(), static_cast<u64>(firstLine.size())));
+    ASSERT_TRUE(parseResult.isOk());
+    const auto val = dc::move(parseResult).unwrap();
+    ASSERT_TRUE(val.getString("error").getSize() > static_cast<usize>(0));
+}

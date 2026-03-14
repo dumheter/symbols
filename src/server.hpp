@@ -8,6 +8,7 @@
 #include <protocol.hpp>
 
 #include <filesystem>
+#include <istream>
 #include <ostream>
 
 namespace symbols {
@@ -30,6 +31,13 @@ auto initializeIndex(Indexer& indexer, const ServerConfig& config) -> void;
 /// Send a JSON response to the given output stream (one line + flush).
 /// Exposed for testing.
 auto sendResponse(std::ostream& out, const dc::String& json) -> void;
+
+/// Inner server loop: read newline-delimited JSON requests from `in`,
+/// write JSON responses to `out`, until shutdown or EOF.
+/// The indexer must already be initialised before calling this.
+/// Exposed for testing.
+[[nodiscard]] auto runServerLoop(std::istream& in, std::ostream& out, Indexer& indexer, const ServerConfig& config)
+    -> s32;
 
 /// Run the symbol server.
 /// Reads JSON requests from stdin, writes JSON responses to stdout.
