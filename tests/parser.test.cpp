@@ -129,9 +129,8 @@ DTEST(parseForwardDeclarationSkipped)
 {
     const auto symbols = parseSourceString("class ForwardOnly;");
 
-    for (u64 i = 0; i < symbols.getSize(); ++i) {
-        ASSERT_TRUE(symbols[i].name != "ForwardOnly");
-    }
+    // Forward declarations have no body, so the parser must produce no symbols.
+    ASSERT_EQ(symbols.getSize(), static_cast<usize>(0));
 }
 
 DTEST(parseQualifiedFunction)
@@ -274,11 +273,8 @@ static float kPi = 3.14f;
 const char* kName = "hello";
 )");
 
-    for (u64 i = 0; i < symbols.getSize(); ++i) {
-        ASSERT_TRUE(symbols[i].name != "globalVar");
-        ASSERT_TRUE(symbols[i].name != "kPi");
-        ASSERT_TRUE(symbols[i].name != "kName");
-    }
+    // Plain variable declarations must never appear in the symbol index.
+    ASSERT_EQ(symbols.getSize(), static_cast<usize>(0));
 }
 
 // ---------------------------------------------------------------------------
