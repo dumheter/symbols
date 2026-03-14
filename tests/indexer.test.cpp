@@ -11,7 +11,7 @@ using namespace symbols;
 
 DTEST(indexerSearchExactMatch)
 {
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
 
     ASSERT_FALSE(indexer.isReady());
     ASSERT_EQ(indexer.symbolCount(), static_cast<usize>(0));
@@ -37,7 +37,7 @@ DTEST(symbolKindRoundTrip)
 
 static auto sharedIndexer() -> Indexer&
 {
-    static Indexer indexer;
+    static Indexer indexer(sharedJobSystem());
     if (!indexer.isReady())
         indexer.build(repoRoot());
     return indexer;
@@ -56,7 +56,7 @@ DTEST(incrementalBuildFallsBackToFullBuildWhenNoRecords)
     const auto file1 = tempDir / "a.cpp";
     writeTempFile(file1, "void alpha() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     ASSERT_FALSE(indexer.isReady());
 
     // incrementalBuild on an empty indexer falls back to full build.
@@ -85,7 +85,7 @@ DTEST(buildWithSearchDirsOnlyIndexesSpecifiedSubdir)
     dc::List<dc::String> searchDirs;
     searchDirs.add(dc::String("src"));
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir, searchDirs);
     ASSERT_TRUE(indexer.isReady());
 
@@ -113,7 +113,7 @@ DTEST(incrementalBuildWithSearchDirsRespectsSubdir)
     dc::List<dc::String> searchDirs;
     searchDirs.add(dc::String("src"));
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir, searchDirs);
     ASSERT_TRUE(indexer.isReady());
 
@@ -144,7 +144,7 @@ DTEST(buildWithNonExistentSearchDirProducesEmptyIndex)
     dc::List<dc::String> searchDirs;
     searchDirs.add(dc::String("nonexistent_subdir"));
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir, searchDirs);
 
     // The non-existent subdir yields no files.
@@ -166,7 +166,7 @@ DTEST(loadCacheWithGarbageContentReturnsErr)
 
     writeTempFile(cacheDir / "symbols-index.json", "not json at all !!!### garbage");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     const auto result = indexer.loadCache(tempDir);
     ASSERT_FALSE(result.isOk());
     ASSERT_FALSE(indexer.isReady());
@@ -182,7 +182,7 @@ DTEST(loadCacheWithWrongVersionReturnsErr)
 
     writeTempFile(cacheDir / "symbols-index.json", R"({"version":999,"symbols":[],"files":[]})");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     const auto result = indexer.loadCache(tempDir);
     ASSERT_FALSE(result.isOk());
     ASSERT_FALSE(indexer.isReady());
@@ -199,7 +199,7 @@ DTEST(loadCacheWithMissingSymbolsKeyReturnsErr)
     // Valid JSON, correct version, but no "symbols" array.
     writeTempFile(cacheDir / "symbols-index.json", R"({"version":2,"files":[]})");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     const auto result = indexer.loadCache(tempDir);
     ASSERT_FALSE(result.isOk());
     ASSERT_FALSE(indexer.isReady());
@@ -215,7 +215,7 @@ DTEST(loadCacheWithEmptySymbolsArraySucceeds)
 
     writeTempFile(cacheDir / "symbols-index.json", R"({"version":2,"symbols":[],"files":[]})");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     const auto result = indexer.loadCache(tempDir);
     ASSERT_TRUE(result.isOk());
     ASSERT_TRUE(indexer.isReady());
@@ -234,7 +234,7 @@ DTEST(scoreMatchExactMatchScores1000)
     std::filesystem::create_directories(tempDir);
     writeTempFile(tempDir / "a.cpp", "void foo() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     const auto results = indexer.search(dc::StringView("foo"), 10);
@@ -251,7 +251,7 @@ DTEST(scoreMatchPrefixScoreAbove500)
     // "fooBar" — "foo" is a prefix, score should be 500+.
     writeTempFile(tempDir / "a.cpp", "void fooBar() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     const auto results = indexer.search(dc::StringView("foo"), 10);
@@ -269,7 +269,7 @@ DTEST(scoreMatchShorterPrefixNameScoresHigher)
     // so its prefix bonus should be higher.
     writeTempFile(tempDir / "a.cpp", "void fooBar() {} void fooBarBaz() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     const auto results = indexer.search(dc::StringView("foo"), 10);
@@ -312,7 +312,7 @@ DTEST(scoreMatchConsecutiveCharsBonusRanksHigher)
     // "abcdef" has all pattern chars consecutive; "aXbXcXdXeXf" has gaps.
     writeTempFile(tempDir / "a.cpp", "void abcdef() {} void aXbXcXdXeXf() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     const auto results = indexer.search(dc::StringView("abcdef"), 10);
@@ -349,7 +349,7 @@ DTEST(searchExactMatchScoresHighest)
 
     writeTempFile(tempDir / "a.cpp", "void calculateTotal() {} void calculate() {} void calc() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     const auto results = indexer.search(dc::StringView("calculateTotal"), 10);
@@ -369,7 +369,7 @@ DTEST(searchPrefixMatchScoresAboveSubsequence)
     // "get" is a prefix of "getValue" but only a subsequence match for "getAndSetValue".
     writeTempFile(tempDir / "a.cpp", "void getValue() {} void getAndSetValue() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     const auto results = indexer.search(dc::StringView("get"), 10);
@@ -397,7 +397,7 @@ DTEST(searchLimitTruncatesResults)
     // Write several matching symbols.
     writeTempFile(tempDir / "a.cpp", "void foo1() {} void foo2() {} void foo3() {} void foo4() {} void foo5() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     const auto results = indexer.search(dc::StringView("foo"), 3);
@@ -430,7 +430,7 @@ DTEST(hasCacheFileReturnsFalseWhenNoCacheExists)
     const auto tempDir = std::filesystem::temp_directory_path() / "symbols_cache_check_absent";
     std::filesystem::create_directories(tempDir);
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     ASSERT_FALSE(indexer.hasCacheFile(tempDir));
 
     std::filesystem::remove_all(tempDir);
@@ -443,7 +443,7 @@ DTEST(hasCacheFileReturnsTrueAfterSave)
 
     writeTempFile(tempDir / "a.cpp", "void foo() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
     [[maybe_unused]] auto saveResult = indexer.saveCache(tempDir);
 
@@ -460,7 +460,7 @@ DTEST(fileCountAfterBuild)
     writeTempFile(tempDir / "a.cpp", "void alpha() {}");
     writeTempFile(tempDir / "b.cpp", "void beta() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     ASSERT_EQ(indexer.fileCount(), static_cast<usize>(2));
@@ -475,11 +475,11 @@ DTEST(cacheRoundTripPreservesSymbolFields)
 
     writeTempFile(tempDir / "myfile.cpp", "class MySpecialClass {};");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
     [[maybe_unused]] auto saveResult = indexer.saveCache(tempDir);
 
-    Indexer indexer2;
+    Indexer indexer2(sharedJobSystem());
     const auto loadResult = indexer2.loadCache(tempDir);
     ASSERT_TRUE(loadResult.isOk());
 
@@ -506,7 +506,7 @@ DTEST(incrementalBuildDetectsRemovedFile)
     writeTempFile(file1, "void alpha() {}");
     writeTempFile(file2, "void beta() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
     ASSERT_TRUE(indexer.symbolCount() >= static_cast<usize>(2));
 
@@ -532,7 +532,7 @@ DTEST(incrementalBuildDetectsChangedFile)
     const auto file1 = tempDir / "a.cpp";
     writeTempFile(file1, "void oldName() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     const auto oldResults = indexer.search(dc::StringView("oldName"), 10);
@@ -562,7 +562,7 @@ DTEST(incrementalBuildNoOpWhenUnchanged)
     const auto file1 = tempDir / "a.cpp";
     writeTempFile(file1, "void stable() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
     const usize countBefore = indexer.symbolCount();
     ASSERT_TRUE(countBefore >= static_cast<usize>(1));
@@ -584,7 +584,7 @@ DTEST(incrementalBuildSurvivesCacheRoundTrip)
 
     // Build, save cache.
     {
-        Indexer indexer;
+        Indexer indexer(sharedJobSystem());
         indexer.build(tempDir);
         [[maybe_unused]] auto saveResult = indexer.saveCache(tempDir);
     }
@@ -593,7 +593,7 @@ DTEST(incrementalBuildSurvivesCacheRoundTrip)
     const auto file2 = tempDir / "b.cpp";
     writeTempFile(file2, "void bar() {}");
 
-    Indexer indexer2;
+    Indexer indexer2(sharedJobSystem());
     const auto loadResult = indexer2.loadCache(tempDir);
     ASSERT_TRUE(loadResult.isOk());
 
@@ -628,7 +628,7 @@ DTEST(scoreMatchUnderscoreBoundaryBonus)
     std::filesystem::create_directories(tempDir);
     writeTempFile(tempDir / "a.cpp", "void get_size() {} void gaps() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     const auto results = indexer.search(dc::StringView("gs"), 10);
@@ -671,7 +671,7 @@ struct bar { void size(); };
 void bar::size() {}
 )");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     const auto results = indexer.search(dc::StringView("bs"), 10);
@@ -707,7 +707,7 @@ DTEST(scoreMatchCaseSensitivityBonus)
     std::filesystem::create_directories(tempDir);
     writeTempFile(tempDir / "a.cpp", "class FooBarBaz {};");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     // Both patterns are subsequences of "FooBarBaz" via the camelCase boundaries.
@@ -735,7 +735,7 @@ DTEST(loadCacheVersionOneLoadsCorrectly)
     writeTempFile(cacheDir / "symbols-index.json",
         R"({"version":1,"symbols":[{"n":"legacyFunc","k":"function","f":"old.cpp","l":7}]})");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     const auto result = indexer.loadCache(tempDir);
     ASSERT_TRUE(result.isOk());
     ASSERT_TRUE(indexer.isReady());

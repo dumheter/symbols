@@ -1,3 +1,4 @@
+#include <dc/job_system.hpp>
 #include <dc/log.hpp>
 
 #include <args.hpp>
@@ -63,6 +64,9 @@ int main(int argc, char** argv)
         dc::log::deinit();
         return 1;
     }
+
+    dc::JobSystem jobSystem;
+    parsed.config.jobSystem = &jobSystem;
 
     const s32 result = symbols::runServer(parsed.config);
 

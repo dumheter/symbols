@@ -1,5 +1,6 @@
 #pragma once
 
+#include <dc/job_system.hpp>
 #include <dc/list.hpp>
 #include <dc/string.hpp>
 #include <dc/types.hpp>
@@ -18,6 +19,7 @@ struct ServerConfig {
     std::filesystem::path projectRoot;
     dc::List<dc::String> searchDirs;
     bool useCache = true;
+    dc::JobSystem* jobSystem = nullptr; ///< Required: must be non-null when used.
 };
 
 /// Initialize the indexer: load from cache or perform a fresh build.

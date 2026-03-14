@@ -1,5 +1,6 @@
 #pragma once
 
+#include <dc/job_system.hpp>
 #include <dc/list.hpp>
 #include <dc/map.hpp>
 #include <dc/result.hpp>
@@ -27,7 +28,7 @@ struct FileRecord {
 /// Supports building from disk, caching, and fuzzy searching.
 class Indexer {
 public:
-    Indexer();
+    explicit Indexer(dc::JobSystem& jobSystem);
     ~Indexer();
 
     Indexer(const Indexer&) = delete;
@@ -78,6 +79,7 @@ private:
     /// Higher score = better match. Returns -1 for no match.
     [[nodiscard]] auto scoreMatch(dc::StringView name, dc::StringView pattern) const -> s32;
 
+    dc::JobSystem* m_jobSystem;
     dc::List<Symbol> m_symbols;
     /// Map from relative file path string to FileRecord (mtime).
     dc::Map<dc::String, FileRecord> m_fileRecords;

@@ -14,7 +14,7 @@ using namespace symbols;
 // Shared real-project indexer for server tests that only need a ready index.
 static auto sharedIndexer() -> Indexer&
 {
-    static Indexer indexer;
+    static Indexer indexer(sharedJobSystem());
     if (!indexer.isReady())
         indexer.build(repoRoot());
     return indexer;
@@ -134,7 +134,7 @@ DTEST(handleRequestStatusWhenReady)
     writeTempFile(tempDir / "a.cpp", "void foo() {}");
     writeTempFile(tempDir / "b.cpp", "void bar() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     ServerConfig config;
@@ -158,7 +158,7 @@ DTEST(handleRequestStatusWhenReady)
 
 DTEST(handleRequestStatusWhenNotReady)
 {
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     ASSERT_FALSE(indexer.isReady());
 
     ServerConfig config;
@@ -203,7 +203,7 @@ DTEST(handleRequestRebuildPicksUpNewFile)
     std::filesystem::create_directories(tempDir);
     writeTempFile(tempDir / "a.cpp", "void existing() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
     const usize countBefore = indexer.symbolCount();
 
@@ -231,7 +231,7 @@ DTEST(handleRequestRebuildPicksUpNewFile)
 
 DTEST(handleRequestShutdownReturnsAck)
 {
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     ServerConfig config;
     config.projectRoot = std::filesystem::temp_directory_path();
     config.useCache = false;
@@ -254,7 +254,7 @@ DTEST(handleRequestShutdownReturnsAck)
 
 DTEST(handleRequestUnknownReturnsError)
 {
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     ServerConfig config;
     config.projectRoot = std::filesystem::temp_directory_path();
     config.useCache = false;
@@ -305,7 +305,7 @@ DTEST(initializeIndexFreshBuildWhenNoCacheRequested)
     config.projectRoot = tempDir;
     config.useCache = false;
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     initializeIndex(indexer, config);
 
     ASSERT_TRUE(indexer.isReady());
@@ -328,7 +328,7 @@ DTEST(initializeIndexLoadsCacheWhenPresent)
 
     // First pass: build and save cache.
     {
-        Indexer indexer;
+        Indexer indexer(sharedJobSystem());
         indexer.build(tempDir);
         [[maybe_unused]] auto r = indexer.saveCache(tempDir);
     }
@@ -338,7 +338,7 @@ DTEST(initializeIndexLoadsCacheWhenPresent)
     config.projectRoot = tempDir;
     config.useCache = true;
 
-    Indexer indexer2;
+    Indexer indexer2(sharedJobSystem());
     initializeIndex(indexer2, config);
 
     ASSERT_TRUE(indexer2.isReady());
@@ -363,7 +363,7 @@ DTEST(initializeIndexFallsBackToBuildOnCorruptCache)
     config.projectRoot = tempDir;
     config.useCache = true;
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     initializeIndex(indexer, config);
 
     // Even with a corrupt cache, the indexer should be ready from a fresh build.
@@ -386,7 +386,7 @@ DTEST(initializeIndexFirstRunCreatesCacheFile)
     config.projectRoot = tempDir;
     config.useCache = true;
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     ASSERT_FALSE(indexer.hasCacheFile(tempDir));
 
     initializeIndex(indexer, config);
@@ -405,7 +405,7 @@ DTEST(handleRequestRebuildSavesCacheWhenEnabled)
     std::filesystem::create_directories(tempDir);
     writeTempFile(tempDir / "a.cpp", "void cacheMe() {}");
 
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
     indexer.build(tempDir);
 
     ServerConfig config;
@@ -471,7 +471,7 @@ DTEST(runServerLoopRespondsToStatus)
 
 DTEST(runServerLoopShutdownExitsLoop)
 {
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
 
     ServerConfig config;
     config.projectRoot = std::filesystem::temp_directory_path();
@@ -495,7 +495,7 @@ DTEST(runServerLoopShutdownExitsLoop)
 DTEST(runServerLoopEofExits)
 {
     // Empty input → immediate EOF → loop exits cleanly.
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
 
     ServerConfig config;
     config.projectRoot = std::filesystem::temp_directory_path();
@@ -538,7 +538,7 @@ DTEST(runServerLoopSkipsBlankLines)
 
 DTEST(runServerLoopReturnsErrorOnBadJson)
 {
-    Indexer indexer;
+    Indexer indexer(sharedJobSystem());
 
     ServerConfig config;
     config.projectRoot = std::filesystem::temp_directory_path();

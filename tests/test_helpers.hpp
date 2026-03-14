@@ -1,6 +1,7 @@
 #pragma once
 
 #include <dc/file.hpp>
+#include <dc/job_system.hpp>
 #include <dc/string.hpp>
 
 #include <filesystem>
@@ -23,4 +24,12 @@
     // Its parent is tests/, whose parent is the repo root.
     const std::filesystem::path self(__FILE__);
     return self.parent_path().parent_path();
+}
+
+/// Return the shared JobSystem used across all tests.
+/// Constructed once; lives for the duration of the test binary.
+[[maybe_unused]] static auto sharedJobSystem() -> dc::JobSystem&
+{
+    static dc::JobSystem jobSystem;
+    return jobSystem;
 }

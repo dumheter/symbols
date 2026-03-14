@@ -139,7 +139,7 @@ auto runServer(const ServerConfig& config) -> s32
 
     LOG_INFO("Symbol server starting for project: {}", config.projectRoot.string().c_str());
 
-    Indexer indexer;
+    Indexer indexer(*config.jobSystem);
     initializeIndex(indexer, config);
 
     sendResponse(std::cout,
