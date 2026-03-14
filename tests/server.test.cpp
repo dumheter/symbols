@@ -11,6 +11,23 @@
 
 using namespace symbols;
 
+// Shared real-project indexer for server tests that only need a ready index.
+static auto sharedIndexer() -> Indexer&
+{
+    static Indexer indexer;
+    if (!indexer.isReady())
+        indexer.build(repoRoot());
+    return indexer;
+}
+
+static auto sharedConfig() -> ServerConfig
+{
+    ServerConfig config;
+    config.projectRoot = repoRoot();
+    config.useCache = false;
+    return config;
+}
+
 static auto makeRequest(Method method, s64 id = 1) -> Request
 {
     Request req;
@@ -36,19 +53,11 @@ static auto makeQueryRequest(dc::String pattern, s64 id = 1, s64 limit = 10) -> 
 
 DTEST(handleRequestQueryReturnsSymbolsArray)
 {
-    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_query";
-    std::filesystem::create_directories(tempDir);
-    writeTempFile(tempDir / "a.cpp", "void myFunc() {}");
+    auto& indexer = sharedIndexer();
+    const auto config = sharedConfig();
 
-    Indexer indexer;
-    indexer.build(tempDir);
-    ASSERT_TRUE(indexer.isReady());
-
-    ServerConfig config;
-    config.projectRoot = tempDir;
-    config.useCache = false;
-
-    const Request req = makeQueryRequest(dc::String("myFunc"));
+    // "scoreMatch" is a real function in the project — exact match must be top result.
+    const Request req = makeQueryRequest(dc::String("scoreMatch"));
     const dc::String response = handleRequest(req, indexer, config);
 
     auto parseResult = JsonValue::parse(dc::StringView(response));
@@ -60,25 +69,14 @@ DTEST(handleRequestQueryReturnsSymbolsArray)
     ASSERT_TRUE(syms != nullptr);
     ASSERT_TRUE(syms->arraySize() >= static_cast<usize>(1));
 
-    // First symbol must be myFunc.
     const JsonValue& first = syms->at(0);
-    ASSERT_TRUE(dc::String(first.getString("name")) == "myFunc");
-
-    std::filesystem::remove_all(tempDir);
+    ASSERT_TRUE(dc::String(first.getString("name")) == "scoreMatch");
 }
 
 DTEST(handleRequestQueryEmptyResultsWhenNoMatch)
 {
-    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_query_nomatch";
-    std::filesystem::create_directories(tempDir);
-    writeTempFile(tempDir / "a.cpp", "void alpha() {}");
-
-    Indexer indexer;
-    indexer.build(tempDir);
-
-    ServerConfig config;
-    config.projectRoot = tempDir;
-    config.useCache = false;
+    auto& indexer = sharedIndexer();
+    const auto config = sharedConfig();
 
     const Request req = makeQueryRequest(dc::String("zzznomatch"));
     const dc::String response = handleRequest(req, indexer, config);
@@ -89,24 +87,15 @@ DTEST(handleRequestQueryEmptyResultsWhenNoMatch)
     const JsonValue* syms = val.get("symbols");
     ASSERT_TRUE(syms != nullptr);
     ASSERT_EQ(syms->arraySize(), static_cast<usize>(0));
-
-    std::filesystem::remove_all(tempDir);
 }
 
 DTEST(handleRequestQuerySymbolHasExpectedFields)
 {
-    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_query_fields";
-    std::filesystem::create_directories(tempDir);
-    writeTempFile(tempDir / "a.cpp", "class FooBar {};");
+    // JsonValue is a real class in src/json.hpp — check all fields are present.
+    auto& indexer = sharedIndexer();
+    const auto config = sharedConfig();
 
-    Indexer indexer;
-    indexer.build(tempDir);
-
-    ServerConfig config;
-    config.projectRoot = tempDir;
-    config.useCache = false;
-
-    const Request req = makeQueryRequest(dc::String("FooBar"));
+    const Request req = makeQueryRequest(dc::String("JsonValue"));
     const dc::String response = handleRequest(req, indexer, config);
 
     auto parseResult = JsonValue::parse(dc::StringView(response));
@@ -116,18 +105,22 @@ DTEST(handleRequestQuerySymbolHasExpectedFields)
     ASSERT_TRUE(syms != nullptr);
     ASSERT_TRUE(syms->arraySize() >= static_cast<usize>(1));
 
-    const JsonValue& sym = syms->at(0);
-    // All four fields must be present and non-empty/valid.
-    ASSERT_TRUE(dc::String(sym.getString("name")) == "FooBar");
-    ASSERT_TRUE(dc::String(sym.getString("kind")) == "class");
-    ASSERT_TRUE(sym.getString("file").getSize() > static_cast<usize>(0));
-    ASSERT_TRUE(sym.getNumber("line") >= static_cast<s64>(1));
-    // score field must exist and be positive.
-    const JsonValue* scoreVal = sym.get("score");
+    // Find the class entry among the results (constructors also match, so scan for kind=="class").
+    const JsonValue* classSym = nullptr;
+    for (usize i = 0; i < syms->arraySize(); ++i) {
+        const JsonValue& s = syms->at(i);
+        if (dc::String(s.getString("kind")) == "class") {
+            classSym = &s;
+            break;
+        }
+    }
+    ASSERT_TRUE(classSym != nullptr);
+    ASSERT_TRUE(dc::String(classSym->getString("name")) == "JsonValue");
+    ASSERT_TRUE(classSym->getString("file").getSize() > static_cast<usize>(0));
+    ASSERT_TRUE(classSym->getNumber("line") >= static_cast<s64>(1));
+    const JsonValue* scoreVal = classSym->get("score");
     ASSERT_TRUE(scoreVal != nullptr);
     ASSERT_TRUE(scoreVal->asNumber() > static_cast<s64>(0));
-
-    std::filesystem::remove_all(tempDir);
 }
 
 // ---------------------------------------------------------------------------
@@ -189,16 +182,8 @@ DTEST(handleRequestStatusWhenNotReady)
 
 DTEST(handleRequestRebuildReturnsAck)
 {
-    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_rebuild";
-    std::filesystem::create_directories(tempDir);
-    writeTempFile(tempDir / "a.cpp", "void alpha() {}");
-
-    Indexer indexer;
-    indexer.build(tempDir);
-
-    ServerConfig config;
-    config.projectRoot = tempDir;
-    config.useCache = false;
+    auto& indexer = sharedIndexer();
+    auto config = sharedConfig();
 
     const Request req = makeRequest(Method::Rebuild, 10);
     const dc::String response = handleRequest(req, indexer, config);
@@ -210,8 +195,6 @@ DTEST(handleRequestRebuildReturnsAck)
     ASSERT_EQ(val.getNumber("id"), static_cast<s64>(10));
     ASSERT_TRUE(dc::String(val.getString("status")) == "rebuilt");
     ASSERT_TRUE(val.get("error") == nullptr);
-
-    std::filesystem::remove_all(tempDir);
 }
 
 DTEST(handleRequestRebuildPicksUpNewFile)
@@ -447,25 +430,16 @@ DTEST(handleRequestRebuildSavesCacheWhenEnabled)
 
 DTEST(runServerLoopRespondsToQuery)
 {
-    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_loop_query";
-    std::filesystem::create_directories(tempDir);
-    writeTempFile(tempDir / "a.cpp", "void loopFunc() {}");
+    auto& indexer = sharedIndexer();
+    const auto config = sharedConfig();
 
-    Indexer indexer;
-    indexer.build(tempDir);
-
-    ServerConfig config;
-    config.projectRoot = tempDir;
-    config.useCache = false;
-
-    std::istringstream in(R"({"id":1,"method":"query","params":{"pattern":"loopFunc","limit":10}})"
+    std::istringstream in(R"({"id":1,"method":"query","params":{"pattern":"scoreMatch","limit":10}})"
                           "\n");
     std::ostringstream out;
 
     const s32 ret = runServerLoop(in, out, indexer, config);
     ASSERT_EQ(ret, static_cast<s32>(0));
 
-    // Parse the response line.
     auto parseResult = JsonValue::parse(dc::StringView(out.str().c_str(), static_cast<u64>(out.str().size())));
     ASSERT_TRUE(parseResult.isOk());
     const auto val = dc::move(parseResult).unwrap();
@@ -474,22 +448,12 @@ DTEST(runServerLoopRespondsToQuery)
     const JsonValue* syms = val.get("symbols");
     ASSERT_TRUE(syms != nullptr);
     ASSERT_TRUE(syms->arraySize() >= static_cast<usize>(1));
-
-    std::filesystem::remove_all(tempDir);
 }
 
 DTEST(runServerLoopRespondsToStatus)
 {
-    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_loop_status";
-    std::filesystem::create_directories(tempDir);
-    writeTempFile(tempDir / "a.cpp", "void statusFunc() {}");
-
-    Indexer indexer;
-    indexer.build(tempDir);
-
-    ServerConfig config;
-    config.projectRoot = tempDir;
-    config.useCache = false;
+    auto& indexer = sharedIndexer();
+    const auto config = sharedConfig();
 
     std::istringstream in(R"({"id":2,"method":"status"})"
                           "\n");
@@ -503,8 +467,6 @@ DTEST(runServerLoopRespondsToStatus)
 
     ASSERT_EQ(val.getNumber("id"), static_cast<s64>(2));
     ASSERT_TRUE(dc::String(val.getString("status")) == "ready");
-
-    std::filesystem::remove_all(tempDir);
 }
 
 DTEST(runServerLoopShutdownExitsLoop)
@@ -550,21 +512,13 @@ DTEST(runServerLoopEofExits)
 
 DTEST(runServerLoopSkipsBlankLines)
 {
-    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_loop_blank";
-    std::filesystem::create_directories(tempDir);
-    writeTempFile(tempDir / "a.cpp", "void blankLineFunc() {}");
-
-    Indexer indexer;
-    indexer.build(tempDir);
-
-    ServerConfig config;
-    config.projectRoot = tempDir;
-    config.useCache = false;
+    auto& indexer = sharedIndexer();
+    const auto config = sharedConfig();
 
     // Two blank lines (one with CR), then a real query, then shutdown.
     std::istringstream in("\r\n"
                           "\n"
-                          R"({"id":3,"method":"query","params":{"pattern":"blankLineFunc","limit":10}})"
+                          R"({"id":3,"method":"query","params":{"pattern":"scoreMatch","limit":10}})"
                           "\n"
                           R"({"id":4,"method":"shutdown"})"
                           "\n");
@@ -580,8 +534,6 @@ DTEST(runServerLoopSkipsBlankLines)
             ++lineCount;
     }
     ASSERT_EQ(lineCount, static_cast<u64>(2));
-
-    std::filesystem::remove_all(tempDir);
 }
 
 DTEST(runServerLoopReturnsErrorOnBadJson)
