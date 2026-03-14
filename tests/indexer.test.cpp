@@ -1,25 +1,13 @@
 #include <dc/dtest.hpp>
-#include <dc/file.hpp>
 #include <indexer.hpp>
+
+#include <test_helpers.hpp>
 
 #include <chrono>
 #include <filesystem>
 #include <thread>
 
 using namespace symbols;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-static auto writeTempFile(const std::filesystem::path& path, const char* content) -> void
-{
-    dc::File file;
-    auto openResult = file.open(dc::String(path.string().c_str()), dc::File::Mode::kWrite);
-    if (openResult.isOk()) {
-        [[maybe_unused]] auto wr = file.write(dc::String(content));
-    }
-}
 
 DTEST(indexerSearchExactMatch)
 {

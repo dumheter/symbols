@@ -1,27 +1,15 @@
 #include <dc/dtest.hpp>
-#include <dc/file.hpp>
 #include <indexer.hpp>
 #include <json.hpp>
 #include <protocol.hpp>
 #include <server.hpp>
 
+#include <test_helpers.hpp>
+
 #include <filesystem>
 #include <sstream>
 
 using namespace symbols;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-static auto writeTempFile(const std::filesystem::path& path, const char* content) -> void
-{
-    dc::File file;
-    auto openResult = file.open(dc::String(path.string().c_str()), dc::File::Mode::kWrite);
-    if (openResult.isOk()) {
-        [[maybe_unused]] auto wr = file.write(dc::String(content));
-    }
-}
 
 static auto makeRequest(Method method, s64 id = 1) -> Request
 {
@@ -399,6 +387,56 @@ DTEST(initializeIndexFallsBackToBuildOnCorruptCache)
     ASSERT_TRUE(indexer.isReady());
     const auto results = indexer.search(dc::StringView("liveFunc"), 10);
     ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(initializeIndexFirstRunCreatesCacheFile)
+{
+    // useCache=true but no cache file exists yet.
+    // initializeIndex must build fresh AND create the cache file on disk.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_init_firstrun";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void firstRun() {}");
+
+    ServerConfig config;
+    config.projectRoot = tempDir;
+    config.useCache = true;
+
+    Indexer indexer;
+    ASSERT_FALSE(indexer.hasCacheFile(tempDir));
+
+    initializeIndex(indexer, config);
+
+    ASSERT_TRUE(indexer.isReady());
+    // Cache file must have been written.
+    ASSERT_TRUE(indexer.hasCacheFile(tempDir));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(handleRequestRebuildSavesCacheWhenEnabled)
+{
+    // When useCache=true, handleRequest(Rebuild) must save the cache file.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_rebuild_cache";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void cacheMe() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    ServerConfig config;
+    config.projectRoot = tempDir;
+    config.useCache = true;
+
+    // No cache yet before the rebuild.
+    ASSERT_FALSE(indexer.hasCacheFile(tempDir));
+
+    const Request req = makeRequest(Method::Rebuild, 42);
+    [[maybe_unused]] const dc::String response = handleRequest(req, indexer, config);
+
+    // Cache must now exist.
+    ASSERT_TRUE(indexer.hasCacheFile(tempDir));
 
     std::filesystem::remove_all(tempDir);
 }
