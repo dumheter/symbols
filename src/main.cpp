@@ -1,9 +1,8 @@
 #include <dc/log.hpp>
-#include <dc/string.hpp>
 
+#include <args.hpp>
 #include <server.hpp>
 
-#include <cstring>
 #include <filesystem>
 #include <print>
 
@@ -40,45 +39,32 @@ int main(int argc, char** argv)
         "stderr");
     dc::log::init();
 
-    symbols::ServerConfig config;
-    config.useCache = true;
-
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--root") == 0 && i + 1 < argc) {
-            config.projectRoot = std::filesystem::path(argv[++i]);
-        } else if (std::strcmp(argv[i], "--search-dir") == 0 && i + 1 < argc) {
-            config.searchDirs.add(dc::String(argv[++i]));
-        } else if (std::strcmp(argv[i], "--no-cache") == 0) {
-            config.useCache = false;
-        } else if (std::strcmp(argv[i], "--help") == 0) {
-            printUsage(argv[0]);
-            dc::log::deinit();
-            return 0;
-        } else {
-            std::println(stderr, "Unknown option: {}", argv[i]);
-            printUsage(argv[0]);
-            dc::log::deinit();
-            return 1;
-        }
-    }
-
-    if (config.projectRoot.empty()) {
-        std::println(stderr, "Error: --root is required\n");
+    auto argsResult = symbols::parseArgs(argc, const_cast<const char**>(argv));
+    if (!argsResult.isOk()) {
+        std::println(stderr, "Error: {}", dc::move(argsResult).unwrapErr().c_str());
         printUsage(argv[0]);
         dc::log::deinit();
         return 1;
     }
 
-    // Normalize to absolute path.
-    config.projectRoot = std::filesystem::absolute(config.projectRoot);
+    auto parsed = dc::move(argsResult).unwrap();
 
-    if (!std::filesystem::exists(config.projectRoot)) {
-        std::println(stderr, "Error: project root does not exist: {}", config.projectRoot.string());
+    if (parsed.helpRequested) {
+        printUsage(argv[0]);
+        dc::log::deinit();
+        return 0;
+    }
+
+    // Normalize to absolute path.
+    parsed.config.projectRoot = std::filesystem::absolute(parsed.config.projectRoot);
+
+    if (!std::filesystem::exists(parsed.config.projectRoot)) {
+        std::println(stderr, "Error: project root does not exist: {}", parsed.config.projectRoot.string());
         dc::log::deinit();
         return 1;
     }
 
-    const s32 result = symbols::runServer(config);
+    const s32 result = symbols::runServer(parsed.config);
 
     dc::log::deinit();
     return result;
