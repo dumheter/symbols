@@ -423,6 +423,80 @@ auto Indexer::hasCacheFile(const std::filesystem::path& projectRoot) const -> bo
 // Fuzzy matching and search
 // ============================================================================
 
+/// Check whether a character suggests a token is a file path (not a name/kind token).
+static auto isFileToken(dc::StringView token) -> bool
+{
+    for (u64 i = 0; i < token.getSize(); ++i) {
+        const char c = token[i];
+        if (c == '/' || c == '\\' || c == '.')
+            return true;
+    }
+    return false;
+}
+
+/// Case-insensitive equality for two StringViews.
+static auto equalsIgnoreCase(dc::StringView a, dc::StringView b) -> bool
+{
+    if (a.getSize() != b.getSize())
+        return false;
+    auto toLower = [](char c) -> char { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c; };
+    for (u64 i = 0; i < a.getSize(); ++i) {
+        if (toLower(a[i]) != toLower(b[i]))
+            return false;
+    }
+    return true;
+}
+
+/// Map a token to a SymbolKind if it matches a known kind name, otherwise returns nullopt-style via out param.
+static auto tokenToKind(dc::StringView token, SymbolKind& out) -> bool
+{
+    if (equalsIgnoreCase(token, dc::StringView("function"))) {
+        out = SymbolKind::Function;
+        return true;
+    }
+    if (equalsIgnoreCase(token, dc::StringView("class"))) {
+        out = SymbolKind::Class;
+        return true;
+    }
+    if (equalsIgnoreCase(token, dc::StringView("struct"))) {
+        out = SymbolKind::Struct;
+        return true;
+    }
+    if (equalsIgnoreCase(token, dc::StringView("enum"))) {
+        out = SymbolKind::Enum;
+        return true;
+    }
+    if (equalsIgnoreCase(token, dc::StringView("alias"))) {
+        out = SymbolKind::Alias;
+        return true;
+    }
+    if (equalsIgnoreCase(token, dc::StringView("typedef"))) {
+        out = SymbolKind::Typedef;
+        return true;
+    }
+    return false;
+}
+
+/// Split a StringView on ASCII space characters into a list of non-empty tokens.
+static auto splitOnSpaces(dc::StringView input) -> dc::List<dc::String>
+{
+    dc::List<dc::String> tokens;
+    u64 start = 0;
+    for (u64 i = 0; i <= input.getSize(); ++i) {
+        const bool atEnd = (i == input.getSize());
+        if (atEnd || input[i] == ' ') {
+            if (i > start) {
+                dc::String tok;
+                for (u64 j = start; j < i; ++j)
+                    tok += input[j];
+                tokens.add(dc::move(tok));
+            }
+            start = i + 1;
+        }
+    }
+    return tokens;
+}
+
 auto Indexer::scoreMatch(dc::StringView name, dc::StringView pattern) const -> s32
 {
     if (pattern.getSize() == 0)
@@ -503,14 +577,61 @@ auto Indexer::search(dc::StringView pattern, u32 limit) const -> dc::List<Search
     if (!m_ready || pattern.getSize() == 0)
         return matches;
 
-    for (u64 i = 0; i < m_symbols.getSize(); ++i) {
-        const s32 score = scoreMatch(dc::StringView(m_symbols[i].name), pattern);
-        if (score >= 0) {
-            SearchResult r;
-            r.symbol = &m_symbols[i];
-            r.score = score;
-            matches.add(r);
+    // Parse the pattern into tokens separated by spaces.
+    // Each token is classified as:
+    //   - A kind filter  : exactly matches a known kind name (struct, class, function, enum, alias, typedef)
+    //   - A file token   : contains '.', '/', or '\' — contributes to a file substring filter
+    //   - A name token   : everything else — concatenated to form the name fuzzy query
+    const auto tokens = splitOnSpaces(pattern);
+
+    bool hasKindFilter = false;
+    SymbolKind kindFilter = SymbolKind::Function;
+    dc::String nameQuery;
+    dc::String fileQuery; // concatenated file tokens (no separator — fuzzy match)
+
+    for (u64 i = 0; i < tokens.getSize(); ++i) {
+        const dc::StringView tok(tokens[i]);
+        SymbolKind k = SymbolKind::Function;
+        if (tokenToKind(tok, k)) {
+            hasKindFilter = true;
+            kindFilter = k;
+        } else if (isFileToken(tok)) {
+            fileQuery += tokens[i];
+        } else {
+            nameQuery += tokens[i];
         }
+    }
+
+    for (u64 i = 0; i < m_symbols.getSize(); ++i) {
+        const Symbol& sym = m_symbols[i];
+
+        // Kind filter — hard exclusion.
+        if (hasKindFilter && sym.kind != kindFilter)
+            continue;
+
+        // File filter — substring match (case-insensitive) on the relative file path.
+        if (fileQuery.getSize() > 0) {
+            const dc::StringView fileSv(sym.file);
+            const dc::StringView fq(fileQuery);
+            // Check whether fq is a subsequence of fileSv (reuse scoreMatch logic).
+            const s32 fileScore = scoreMatch(fileSv, fq);
+            if (fileScore < 0)
+                continue;
+        }
+
+        // Name query — fuzzy score.  If nameQuery is empty (user only typed kind/file tokens)
+        // we accept all surviving symbols with score 0.
+        s32 score = 0;
+        if (nameQuery.getSize() > 0) {
+            score = scoreMatch(dc::StringView(sym.name), dc::StringView(nameQuery));
+            if (score < 0)
+                continue;
+        }
+
+        SearchResult r;
+        r.symbol = &sym;
+        r.score = score;
+        matches.add(r);
     }
 
     if (matches.getSize() > 1) {

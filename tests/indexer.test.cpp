@@ -807,3 +807,270 @@ DTEST(loadCacheVersionOneLoadsCorrectly)
 
     std::filesystem::remove_all(tempDir);
 }
+
+// ---------------------------------------------------------------------------
+// Multi-token search tests (name + kind filter + file filter)
+//
+// These tests run against the symbols project itself (the repo root is derived
+// from the compile-time path of test_helpers.hpp via repoRoot()).
+//
+// Known symbols used as anchors:
+//   SearchResult   struct   src/indexer.hpp
+//   FileRecord     struct   src/indexer.hpp
+//   ServerConfig   struct   src/server.hpp
+//   ParsedArgs     struct   src/args.hpp
+//   ParseError     struct   src/json.cpp
+//   Parser         class    src/parser.hpp
+//   JsonValue      class    src/json.hpp
+//   Indexer        class    src/indexer.hpp
+//   SymbolKind     enum     src/parser.hpp
+//   char8          alias    build/_deps/dc-src/include/dc/types.hpp
+//   symbolKindToString  function  src/parser.cpp  (+ declaration in .hpp)
+// ---------------------------------------------------------------------------
+
+/// Helper: return true when at least one result has the given name.
+static auto hasResult(const dc::List<SearchResult>& results, const char* name) -> bool
+{
+    for (u64 i = 0; i < results.getSize(); ++i) {
+        if (results[i].symbol->name == name)
+            return true;
+    }
+    return false;
+}
+
+/// Helper: return true when every result has the given kind.
+static auto allKind(const dc::List<SearchResult>& results, SymbolKind kind) -> bool
+{
+    for (u64 i = 0; i < results.getSize(); ++i) {
+        if (results[i].symbol->kind != kind)
+            return false;
+    }
+    return true;
+}
+
+/// Helper: return true when every result's file contains the given substring.
+static auto allFileContains(const dc::List<SearchResult>& results, const char* sub) -> bool
+{
+    const dc::StringView needle(sub);
+    for (u64 i = 0; i < results.getSize(); ++i) {
+        const dc::StringView file(results[i].symbol->file);
+        bool found = false;
+        if (file.getSize() >= needle.getSize()) {
+            for (u64 j = 0; j <= file.getSize() - needle.getSize(); ++j) {
+                bool match = true;
+                for (u64 k = 0; k < needle.getSize(); ++k) {
+                    if (file[j + k] != needle[k]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (!found)
+            return false;
+    }
+    return true;
+}
+
+// Shared indexer built once for all multi-token tests.
+// Built lazily on first use and reused for subsequent tests.
+static auto sharedIndexer() -> Indexer&
+{
+    static Indexer indexer;
+    if (!indexer.isReady())
+        indexer.build(repoRoot());
+    return indexer;
+}
+
+DTEST(multiTokenNameOnly)
+{
+    // Plain name search: "SearchResult" finds the struct in src/indexer.hpp (and
+    // potentially other matches), top result must be SearchResult itself.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("SearchResult"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(hasResult(results, "SearchResult"));
+}
+
+DTEST(multiTokenKindFilterStruct)
+{
+    // "SearchResult struct" — only structs named SearchResult should appear.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("SearchResult struct"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(hasResult(results, "SearchResult"));
+    ASSERT_TRUE(allKind(results, SymbolKind::Struct));
+}
+
+DTEST(multiTokenKindFilterClass)
+{
+    // "Parser class" — must find the Parser class in src/parser.hpp, all results are classes.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("Parser class"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(hasResult(results, "Parser"));
+    ASSERT_TRUE(allKind(results, SymbolKind::Class));
+}
+
+DTEST(multiTokenKindFilterFunction)
+{
+    // "symbolKindToString function" — only functions, no declarations of other kinds.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("symbolKindToString function"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(hasResult(results, "symbolKindToString"));
+    ASSERT_TRUE(allKind(results, SymbolKind::Function));
+}
+
+DTEST(multiTokenKindFilterEnum)
+{
+    // "SymbolKind enum" — must find the SymbolKind enum in src/parser.hpp.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("SymbolKind enum"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(hasResult(results, "SymbolKind"));
+    ASSERT_TRUE(allKind(results, SymbolKind::Enum));
+}
+
+DTEST(multiTokenKindFilterAlias)
+{
+    // "char8 alias" — must find the char8 alias in dc/types.hpp, all results are aliases.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("char8 alias"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(hasResult(results, "char8"));
+    ASSERT_TRUE(allKind(results, SymbolKind::Alias));
+}
+
+DTEST(multiTokenKindFilterTypedef)
+{
+    // "Scanner typedef" — must find Scanner typedefs, all results are typedefs.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("Scanner typedef"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(hasResult(results, "Scanner"));
+    ASSERT_TRUE(allKind(results, SymbolKind::Typedef));
+}
+
+DTEST(multiTokenFileFilter)
+{
+    // "SearchResult indexer.hpp" — file filter restricts to indexer.hpp;
+    // the SearchResult struct lives there so it must appear.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("SearchResult indexer.hpp"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(hasResult(results, "SearchResult"));
+    ASSERT_TRUE(allFileContains(results, "indexer"));
+}
+
+DTEST(multiTokenFileFilterExcludesWrongFile)
+{
+    // "SearchResult server.hpp" — SearchResult is not in server.hpp, must return nothing.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("SearchResult server.hpp"), 50);
+    ASSERT_FALSE(hasResult(results, "SearchResult"));
+}
+
+DTEST(multiTokenFileFilterByDir)
+{
+    // "ServerConfig src/" — all results must come from files under src/.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("ServerConfig src/"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(hasResult(results, "ServerConfig"));
+    ASSERT_TRUE(allFileContains(results, "src/"));
+}
+
+DTEST(multiTokenKindAndFileFilter)
+{
+    // "struct indexer.hpp" — only structs from files matching "indexer.hpp":
+    // SearchResult and FileRecord both live in src/indexer.hpp.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("struct indexer.hpp"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(2));
+    ASSERT_TRUE(hasResult(results, "SearchResult"));
+    ASSERT_TRUE(hasResult(results, "FileRecord"));
+    ASSERT_TRUE(allKind(results, SymbolKind::Struct));
+    ASSERT_TRUE(allFileContains(results, "indexer"));
+}
+
+DTEST(multiTokenOrderIndependentKindFirst)
+{
+    // "struct SearchResult" and "SearchResult struct" must produce identical results.
+    const auto& indexer = sharedIndexer();
+
+    const auto a = indexer.search(dc::StringView("struct SearchResult"), 50);
+    const auto b = indexer.search(dc::StringView("SearchResult struct"), 50);
+
+    ASSERT_EQ(a.getSize(), b.getSize());
+    for (u64 i = 0; i < a.getSize(); ++i) {
+        ASSERT_TRUE(a[i].symbol->name == b[i].symbol->name);
+        ASSERT_EQ(a[i].symbol->kind, b[i].symbol->kind);
+    }
+}
+
+DTEST(multiTokenOrderIndependentFileFirst)
+{
+    // "indexer.hpp SearchResult struct", "struct SearchResult indexer.hpp",
+    // and "SearchResult indexer.hpp struct" must all produce the same results.
+    const auto& indexer = sharedIndexer();
+
+    const auto a = indexer.search(dc::StringView("indexer.hpp SearchResult struct"), 50);
+    const auto b = indexer.search(dc::StringView("struct SearchResult indexer.hpp"), 50);
+    const auto c = indexer.search(dc::StringView("SearchResult indexer.hpp struct"), 50);
+
+    ASSERT_EQ(a.getSize(), b.getSize());
+    ASSERT_EQ(a.getSize(), c.getSize());
+    for (u64 i = 0; i < a.getSize(); ++i) {
+        ASSERT_TRUE(a[i].symbol->name == b[i].symbol->name);
+        ASSERT_TRUE(a[i].symbol->name == c[i].symbol->name);
+    }
+}
+
+DTEST(multiTokenKindOnlyNoNameToken)
+{
+    // "enum" alone returns all enums; SymbolKind must be among them.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("enum"), 200);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(hasResult(results, "SymbolKind"));
+    ASSERT_TRUE(allKind(results, SymbolKind::Enum));
+}
+
+DTEST(multiTokenFileOnlyNoNameToken)
+{
+    // "parser.hpp" alone returns all symbols from files matching "parser.hpp";
+    // that must include at least Parser (class) and SymbolKind (enum).
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("parser.hpp"), 200);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(2));
+    ASSERT_TRUE(hasResult(results, "Parser"));
+    ASSERT_TRUE(hasResult(results, "SymbolKind"));
+    ASSERT_TRUE(allFileContains(results, "parser"));
+}
+
+DTEST(multiTokenKindFilterExcludesNonMatching)
+{
+    // "SearchResult class" — SearchResult is a struct, not a class, so zero results.
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("SearchResult class"), 50);
+    ASSERT_EQ(results.getSize(), static_cast<u64>(0));
+}
