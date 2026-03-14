@@ -659,3 +659,163 @@ DTEST(incrementalBuildSurvivesCacheRoundTrip)
 
     std::filesystem::remove_all(tempDir);
 }
+
+// ---------------------------------------------------------------------------
+// scoreMatch edge-case tests
+// ---------------------------------------------------------------------------
+
+DTEST(scoreMatchSingleCharPattern)
+{
+    // Single-char pattern that is a prefix of the target must score >= 500.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_score_single_char";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void getSize() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    // 'g' is a prefix of "getSize" → must match with score >= 500.
+    const auto results = indexer.search(dc::StringView("g"), 10);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(results[0].score >= static_cast<s32>(500));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(scoreMatchUnderscoreBoundaryBonus)
+{
+    // "gs" matches "get_size" via underscore word-boundary bonus and must
+    // outrank a non-boundary subsequence match like "gaps" (g...s but no boundary).
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_score_underscore";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void get_size() {} void gaps() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    const auto results = indexer.search(dc::StringView("gs"), 10);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+
+    // get_size must appear in results (boundary on 's' after '_').
+    bool foundGetSize = false;
+    for (u64 i = 0; i < results.getSize(); ++i) {
+        if (results[i].symbol->name == "get_size")
+            foundGetSize = true;
+    }
+    ASSERT_TRUE(foundGetSize);
+
+    // get_size must outrank gaps (gaps has no word-boundary for 's').
+    if (results.getSize() >= static_cast<u64>(2)) {
+        bool getSizeFirst = false;
+        for (u64 i = 0; i < results.getSize(); ++i) {
+            if (results[i].symbol->name == "get_size") {
+                getSizeFirst = true;
+                break;
+            }
+            if (results[i].symbol->name == "gaps")
+                break;
+        }
+        ASSERT_TRUE(getSizeFirst);
+    }
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(scoreMatchNamespaceSeparatorBonus)
+{
+    // Pattern "bs" matching "bar::size" should get the word-boundary bonus
+    // for ':' and thus return a positive score.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_score_namespace";
+    std::filesystem::create_directories(tempDir);
+    // Use a qualified out-of-class function definition so the parser captures "bar::size".
+    writeTempFile(tempDir / "a.cpp", R"(
+struct bar { void size(); };
+void bar::size() {}
+)");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    const auto results = indexer.search(dc::StringView("bs"), 10);
+    // "bar::size" must appear.
+    bool found = false;
+    for (u64 i = 0; i < results.getSize(); ++i) {
+        if (results[i].symbol->name == "bar::size") {
+            found = true;
+            // Score must include at least the word-boundary bonus for 's'.
+            ASSERT_TRUE(results[i].score > static_cast<s32>(0));
+        }
+    }
+    ASSERT_TRUE(found);
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(scoreMatchPatternLongerThanNameReturnsNoMatch)
+{
+    // A pattern that is longer than the symbol name can never be a subsequence
+    // of that name, so it must not appear in the results.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_score_too_long";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void foo() {}");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    // "toolongpattern" is far longer than "foo".
+    const auto results = indexer.search(dc::StringView("toolongpattern"), 10);
+    ASSERT_EQ(results.getSize(), static_cast<u64>(0));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(scoreMatchCaseSensitivityBonus)
+{
+    // The +5 per-char case bonus applies in the subsequence path.
+    // Use symbol "FooBarBaz" with a short pattern that can't be a prefix, forcing
+    // subsequence scoring. Case-exact "FB" must score >= case-folded "fb" for the
+    // same symbol because each matched character that matches exactly gets +5.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_score_case_bonus";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "class FooBarBaz {};");
+
+    Indexer indexer;
+    indexer.build(tempDir);
+
+    // Both patterns are subsequences of "FooBarBaz" via the camelCase boundaries.
+    const auto exactCase = indexer.search(dc::StringView("FB"), 10);
+    const auto foldedCase = indexer.search(dc::StringView("fb"), 10);
+
+    ASSERT_TRUE(exactCase.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(foldedCase.getSize() >= static_cast<u64>(1));
+
+    // Exact-case pattern "FB" must score >= case-folded "fb" for the same symbol.
+    ASSERT_TRUE(exactCase[0].score >= foldedCase[0].score);
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(loadCacheVersionOneLoadsCorrectly)
+{
+    // Version 1 cache has no "files" array. loadCache must still succeed
+    // and populate symbols correctly.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_cache_v1";
+    const auto cacheDir = tempDir / ".cache";
+    std::filesystem::create_directories(cacheDir);
+
+    // Hand-craft a v1 cache with one symbol.
+    writeTempFile(cacheDir / "symbols-index.json",
+        R"({"version":1,"symbols":[{"n":"legacyFunc","k":"function","f":"old.cpp","l":7}]})");
+
+    Indexer indexer;
+    const auto result = indexer.loadCache(tempDir);
+    ASSERT_TRUE(result.isOk());
+    ASSERT_TRUE(indexer.isReady());
+    ASSERT_EQ(indexer.symbolCount(), static_cast<usize>(1));
+
+    const auto results = indexer.search(dc::StringView("legacyFunc"), 10);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(results[0].symbol->name == "legacyFunc");
+
+    std::filesystem::remove_all(tempDir);
+}
