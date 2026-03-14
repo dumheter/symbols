@@ -5,6 +5,7 @@
 
 #include <tree_sitter/api.h>
 
+#include <algorithm>
 #include <cstring>
 
 extern "C" const TSLanguage* tree_sitter_cpp(void);
@@ -158,16 +159,12 @@ static auto isForwardDeclaration(SymbolKind kind, TSNode capturedNode) -> bool
     return ts_node_is_null(body);
 }
 
-/// Count the line number for a byte offset.
-static auto lineForByte(const char* source, u32 byteOffset) -> u32
-{
-    u32 line = 1;
-    for (u32 i = 0; i < byteOffset; ++i) {
-        if (source[i] == '\n')
-            ++line;
-    }
-    return line;
-}
+/// Intermediate capture record used for single-pass line counting.
+struct CaptureInfo {
+    u32 byteOffset;
+    SymbolKind kind;
+    dc::String name;
+};
 
 Parser::Parser()
     : m_impl(new Impl)
@@ -269,12 +266,12 @@ auto Parser::operator=(Parser&& other) noexcept -> Parser&
     // Execute query.
     ts_query_cursor_exec(m_impl->cursor, m_impl->query, root);
 
-    dc::List<Symbol> symbols;
     TSQueryMatch match;
 
-    // Track (byteOffset, kind) pairs to deduplicate symbols that are matched
-    // by both the plain pattern and the template_declaration pattern.
-    dc::List<u32> seenByteOffsets;
+    // Collect all valid captures first; deduplication happens after sorting.
+    // template_declaration patterns fire alongside plain patterns for the same
+    // inner node (producing duplicate byte offsets), so we must deduplicate.
+    dc::List<CaptureInfo> captures;
 
     while (ts_query_cursor_next_match(m_impl->cursor, &match)) {
         for (u16 i = 0; i < match.capture_count; ++i) {
@@ -289,31 +286,49 @@ auto Parser::operator=(Parser&& other) noexcept -> Parser&
             if (isForwardDeclaration(kind, node))
                 continue;
 
-            const u32 byteOffset = ts_node_start_byte(node);
-
-            // Deduplicate: template_declaration patterns fire in addition to
-            // the plain patterns for the same inner node.
-            bool alreadySeen = false;
-            for (u64 j = 0; j < seenByteOffsets.getSize(); ++j) {
-                if (seenByteOffsets[j] == byteOffset) {
-                    alreadySeen = true;
-                    break;
-                }
-            }
-            if (alreadySeen)
-                continue;
-            seenByteOffsets.add(byteOffset);
-
-            dc::String name = extractNodeName(node, sourcePtr);
-            const u32 line = lineForByte(sourcePtr, byteOffset);
-
-            Symbol sym;
-            sym.name = dc::move(name);
-            sym.kind = kind;
-            sym.file = relativePathStr;
-            sym.line = line;
-            symbols.add(dc::move(sym));
+            CaptureInfo cap;
+            cap.byteOffset = ts_node_start_byte(node);
+            cap.kind = kind;
+            cap.name = extractNodeName(node, sourcePtr);
+            captures.add(dc::move(cap));
         }
+    }
+
+    // Sort by byte offset so that:
+    //   1. Duplicate offsets (template + plain patterns for the same node) are
+    //      adjacent and can be removed with a single O(1) prev-offset check.
+    //   2. Line numbers can be assigned in one forward pass — O(N + S) instead
+    //      of O(S * N).
+    std::sort(captures.begin(), captures.end(),
+        [](const CaptureInfo& a, const CaptureInfo& b) { return a.byteOffset < b.byteOffset; });
+
+    dc::List<Symbol> symbols;
+    symbols.reserve(captures.getSize());
+
+    u32 curByte = 0;
+    u32 curLine = 1;
+    u32 prevOffset = ~static_cast<u32>(0); // sentinel: no previous offset
+    for (u64 i = 0; i < captures.getSize(); ++i) {
+        CaptureInfo& cap = captures[i];
+
+        // Adjacent-duplicate removal: template patterns produce the same byte
+        // offset as the inner plain pattern; skip the duplicate.
+        if (cap.byteOffset == prevOffset)
+            continue;
+        prevOffset = cap.byteOffset;
+
+        while (curByte < cap.byteOffset) {
+            if (sourcePtr[curByte] == '\n')
+                ++curLine;
+            ++curByte;
+        }
+
+        Symbol sym;
+        sym.name = dc::move(cap.name);
+        sym.kind = cap.kind;
+        sym.file = relativePathStr;
+        sym.line = curLine;
+        symbols.add(dc::move(sym));
     }
 
     ts_tree_delete(tree);
