@@ -19,8 +19,11 @@ static auto parseSourceString(const char* source) -> dc::List<Symbol>
         }
     }
 
+    const auto relPath = std::filesystem::relative(tempFile, tempDir);
+    const dc::String relPathStr(relPath.generic_string().c_str());
+
     Parser parser;
-    auto result = parser.parseFile(tempFile, tempDir);
+    auto result = parser.parseFile(tempFile, dc::StringView(relPathStr));
     std::filesystem::remove(tempFile);
 
     if (result.isOk()) {
@@ -313,8 +316,11 @@ DTEST(parseSymbolFileIsRelativePath)
         }
     }
 
+    const auto relPath2 = std::filesystem::relative(tempFile, tempDir);
+    const dc::String relPathStr2(relPath2.generic_string().c_str());
+
     Parser parser;
-    auto result = parser.parseFile(tempFile, tempDir);
+    auto result = parser.parseFile(tempFile, dc::StringView(relPathStr2));
     std::filesystem::remove(tempFile);
 
     ASSERT_TRUE(result.isOk());
@@ -354,7 +360,7 @@ DTEST(parseNonExistentFileReturnsError)
     std::filesystem::remove(fakePath); // ensure it doesn't exist
 
     Parser parser;
-    auto result = parser.parseFile(fakePath, std::filesystem::temp_directory_path());
+    auto result = parser.parseFile(fakePath, dc::StringView("symbols_no_such_file_xyz.cpp"));
     ASSERT_FALSE(result.isOk());
 }
 
@@ -427,10 +433,13 @@ DTEST(parserMoveConstructorAllowsParsingAfterMove)
         }
     }
 
+    const auto relPathMv = std::filesystem::relative(tempFile, tempDir);
+    const dc::String relPathMvStr(relPathMv.generic_string().c_str());
+
     Parser original;
     Parser moved(dc::move(original));
 
-    auto result = moved.parseFile(tempFile, tempDir);
+    auto result = moved.parseFile(tempFile, dc::StringView(relPathMvStr));
     std::filesystem::remove(tempFile);
 
     ASSERT_TRUE(result.isOk());

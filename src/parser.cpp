@@ -137,11 +137,9 @@ static auto captureNameToKind(const char* name, u32 len) -> SymbolKind
     return SymbolKind::Function;
 }
 
-/// Extract the symbol name from a node.
-static auto extractNodeName(TSNode node, const char* source) -> dc::String
+/// Extract the symbol name from a node's byte range within the source buffer.
+static auto extractNodeName(const char* source, u32 start, u32 end) -> dc::String
 {
-    const u32 start = ts_node_start_byte(node);
-    const u32 end = ts_node_end_byte(node);
     return dc::String(source + start, static_cast<u64>(end - start));
 }
 
@@ -160,10 +158,13 @@ static auto isForwardDeclaration(SymbolKind kind, TSNode capturedNode) -> bool
 }
 
 /// Intermediate capture record used for single-pass line counting.
+/// Stores the raw byte range into the source buffer instead of copying the
+/// name into a dc::String — the allocation is deferred until the symbol
+/// survives deduplication and is promoted to a final Symbol.
 struct CaptureInfo {
     u32 byteOffset;
+    u32 byteEnd;
     SymbolKind kind;
-    dc::String name;
 };
 
 Parser::Parser()
@@ -222,7 +223,7 @@ auto Parser::operator=(Parser&& other) noexcept -> Parser&
     return *this;
 }
 
-[[nodiscard]] auto Parser::parseFile(const std::filesystem::path& filePath, const std::filesystem::path& projectRoot)
+[[nodiscard]] auto Parser::parseFile(const std::filesystem::path& filePath, dc::StringView relativePath)
     -> dc::Result<dc::List<Symbol>, dc::String>
 {
     if (!m_impl || !m_impl->query) {
@@ -259,11 +260,17 @@ auto Parser::operator=(Parser&& other) noexcept -> Parser&
 
     const TSNode root = ts_tree_root_node(tree);
 
-    // Compute relative path.
-    const auto relativePath = std::filesystem::relative(filePath, projectRoot);
-    dc::String relativePathStr(relativePath.generic_string().c_str());
+    // relativePath is pre-computed by the caller to avoid repeated
+    // std::filesystem::relative() calls on the worker threads.
+    const dc::String relativePathStr(relativePath);
 
     // Execute query.
+    // Limit the cursor to nodes that *start* at or above depth 8 relative to
+    // the translation-unit root.  Top-level and namespace-scoped symbols live
+    // at depth 0–6; this prevents the cursor from descending into the bodies
+    // of functions (where the bulk of AST nodes live) while still capturing
+    // all symbols we care about.
+    ts_query_cursor_set_max_start_depth(m_impl->cursor, 8);
     ts_query_cursor_exec(m_impl->cursor, m_impl->query, root);
 
     TSQueryMatch match;
@@ -288,8 +295,8 @@ auto Parser::operator=(Parser&& other) noexcept -> Parser&
 
             CaptureInfo cap;
             cap.byteOffset = ts_node_start_byte(node);
+            cap.byteEnd = ts_node_end_byte(node);
             cap.kind = kind;
-            cap.name = extractNodeName(node, sourcePtr);
             captures.add(dc::move(cap));
         }
     }
@@ -324,7 +331,7 @@ auto Parser::operator=(Parser&& other) noexcept -> Parser&
         }
 
         Symbol sym;
-        sym.name = dc::move(cap.name);
+        sym.name = extractNodeName(sourcePtr, cap.byteOffset, cap.byteEnd);
         sym.kind = cap.kind;
         sym.file = relativePathStr;
         sym.line = curLine;

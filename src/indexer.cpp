@@ -98,12 +98,22 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
     for (u32 i = 0; i < nFiles; ++i)
         results.push_back(dc::Err<dc::String>(dc::String("not started")));
 
+    // Pre-compute relative paths on the main thread so workers don't each call
+    // std::filesystem::relative() independently.
+    std::vector<dc::String> relPaths;
+    relPaths.reserve(nFiles);
+    for (u32 i = 0; i < nFiles; ++i) {
+        std::error_code ec;
+        const auto rel = std::filesystem::relative(allFiles[i], projectRoot, ec);
+        relPaths.push_back(ec ? dc::String(allFiles[i].string().c_str()) : dc::String(rel.generic_string().c_str()));
+    }
+
     dc::List<dc::Job> jobs;
     jobs.reserve(nFiles);
     for (u32 i = 0; i < nFiles; ++i) {
         jobs.add(dc::Job { [&, i] {
             thread_local Parser tlsParser;
-            results[i] = tlsParser.parseFile(allFiles[i], projectRoot);
+            results[i] = tlsParser.parseFile(allFiles[i], dc::StringView(relPaths[i]));
         } });
     }
 
@@ -115,25 +125,11 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
         if (results[i].isOk()) {
             auto fileSymbols = dc::move(results[i]).unwrap();
 
-            // Record mtime using relative path (same key as symbol.file).
-            if (fileSymbols.getSize() > 0) {
-                const dc::String relPath(fileSymbols[0].file);
-                const s64 mtime = getFileMtime(allFiles[i]);
-                auto* rec = m_fileRecords.insert(relPath);
-                if (rec)
-                    rec->mtime = mtime;
-            } else {
-                // File parsed successfully but had no symbols — still track it.
-                std::error_code ec;
-                const auto relPath = std::filesystem::relative(allFiles[i], projectRoot, ec);
-                if (!ec) {
-                    const dc::String key(relPath.string().c_str());
-                    const s64 mtime = getFileMtime(allFiles[i]);
-                    auto* rec = m_fileRecords.insert(key);
-                    if (rec)
-                        rec->mtime = mtime;
-                }
-            }
+            // Record mtime using pre-computed relative path.
+            const s64 mtime = getFileMtime(allFiles[i]);
+            auto* rec = m_fileRecords.insert(relPaths[i]);
+            if (rec)
+                rec->mtime = mtime;
 
             for (u64 j = 0; j < fileSymbols.getSize(); ++j)
                 m_symbols.add(dc::move(fileSymbols[j]));
@@ -258,12 +254,22 @@ auto Indexer::incrementalBuild(const std::filesystem::path& projectRoot, const d
     for (u32 i = 0; i < nToParse; ++i)
         results.push_back(dc::Err<dc::String>(dc::String("not started")));
 
+    // Pre-compute relative paths on the main thread.
+    std::vector<dc::String> relPaths;
+    relPaths.reserve(nToParse);
+    for (u32 i = 0; i < nToParse; ++i) {
+        std::error_code ec;
+        const auto rel = std::filesystem::relative(filesToParse[i], projectRoot, ec);
+        relPaths.push_back(
+            ec ? dc::String(filesToParse[i].string().c_str()) : dc::String(rel.generic_string().c_str()));
+    }
+
     dc::List<dc::Job> jobs;
     jobs.reserve(nToParse);
     for (u32 i = 0; i < nToParse; ++i) {
         jobs.add(dc::Job { [&, i] {
             thread_local Parser tlsParser;
-            results[i] = tlsParser.parseFile(filesToParse[i], projectRoot);
+            results[i] = tlsParser.parseFile(filesToParse[i], dc::StringView(relPaths[i]));
         } });
     }
 
@@ -275,20 +281,15 @@ auto Indexer::incrementalBuild(const std::filesystem::path& projectRoot, const d
         if (results[i].isOk()) {
             auto fileSymbols = dc::move(results[i]).unwrap();
 
-            // Update mtime record.
-            std::error_code ec;
-            const auto rel = std::filesystem::relative(filesToParse[i], projectRoot, ec);
-            if (!ec) {
-                const dc::String key(rel.string().c_str());
-                const s64 mtime = getFileMtime(filesToParse[i]);
-                auto* rec = m_fileRecords.tryGet(key);
-                if (rec) {
-                    rec->value.mtime = mtime;
-                } else {
-                    auto* newRec = m_fileRecords.insert(key);
-                    if (newRec)
-                        newRec->mtime = mtime;
-                }
+            // Update mtime record using pre-computed relative path.
+            const s64 mtime = getFileMtime(filesToParse[i]);
+            auto* rec = m_fileRecords.tryGet(relPaths[i]);
+            if (rec) {
+                rec->value.mtime = mtime;
+            } else {
+                auto* newRec = m_fileRecords.insert(relPaths[i]);
+                if (newRec)
+                    newRec->mtime = mtime;
             }
 
             for (u64 j = 0; j < fileSymbols.getSize(); ++j)

@@ -46,9 +46,9 @@ public:
     auto operator=(Parser&&) noexcept -> Parser&;
 
     /// Parse a single file and extract all symbols.
-    /// @param filePath Absolute path to the file.
-    /// @param projectRoot Project root for computing relative paths.
-    [[nodiscard]] auto parseFile(const std::filesystem::path& filePath, const std::filesystem::path& projectRoot)
+    /// @param filePath     Absolute path to the file.
+    /// @param relativePath Pre-computed relative path from the project root (used as Symbol::file).
+    [[nodiscard]] auto parseFile(const std::filesystem::path& filePath, dc::StringView relativePath)
         -> dc::Result<dc::List<Symbol>, dc::String>;
 
 private:
