@@ -1,6 +1,7 @@
 #include <indexer.hpp>
 
 #include <dc/file.hpp>
+#include <dc/job_system.hpp>
 #include <dc/log.hpp>
 #include <dc/time.hpp>
 
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <cstring>
 #include <system_error>
+#include <vector>
 
 namespace symbols {
 
@@ -27,8 +29,9 @@ static auto getFileMtime(const std::filesystem::path& path) -> s64
     return static_cast<s64>(ftime.time_since_epoch().count());
 }
 
-Indexer::Indexer()
-    : m_fileCount(0)
+Indexer::Indexer(dc::JobSystem& jobSystem)
+    : m_jobSystem(&jobSystem)
+    , m_fileCount(0)
     , m_ready(false)
 {
 }
@@ -36,11 +39,13 @@ Indexer::Indexer()
 Indexer::~Indexer() = default;
 
 Indexer::Indexer(Indexer&& other) noexcept
-    : m_symbols(dc::move(other.m_symbols))
+    : m_jobSystem(other.m_jobSystem)
+    , m_symbols(dc::move(other.m_symbols))
     , m_fileRecords(dc::move(other.m_fileRecords))
     , m_fileCount(other.m_fileCount)
     , m_ready(other.m_ready)
 {
+    other.m_jobSystem = nullptr;
     other.m_fileCount = 0;
     other.m_ready = false;
 }
@@ -48,10 +53,12 @@ Indexer::Indexer(Indexer&& other) noexcept
 auto Indexer::operator=(Indexer&& other) noexcept -> Indexer&
 {
     if (this != &other) {
+        m_jobSystem = other.m_jobSystem;
         m_symbols = dc::move(other.m_symbols);
         m_fileRecords = dc::move(other.m_fileRecords);
         m_fileCount = other.m_fileCount;
         m_ready = other.m_ready;
+        other.m_jobSystem = nullptr;
         other.m_fileCount = 0;
         other.m_ready = false;
     }
@@ -62,7 +69,6 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
 {
     dc::Stopwatch timer;
 
-    Parser parser;
     const auto extensions = defaultCppExtensions();
 
     dc::List<std::filesystem::path> scanRoots;
@@ -85,15 +91,29 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
 
     m_symbols.clear();
     m_fileRecords = dc::Map<dc::String, FileRecord>();
+
+    const u32 nFiles = static_cast<u32>(allFiles.getSize());
+    std::vector<dc::Result<dc::List<Symbol>, dc::String>> results;
+    results.reserve(nFiles);
+    for (u32 i = 0; i < nFiles; ++i)
+        results.push_back(dc::Err<dc::String>(dc::String("not started")));
+
+    dc::List<dc::Job> jobs;
+    jobs.reserve(nFiles);
+    for (u32 i = 0; i < nFiles; ++i) {
+        jobs.add(dc::Job { [&, i] {
+            thread_local Parser tlsParser;
+            results[i] = tlsParser.parseFile(allFiles[i], projectRoot);
+        } });
+    }
+
+    if (jobs.getSize() > 0)
+        m_jobSystem->add(jobs).await();
+
     s64 errorCount = 0;
-
-    for (u64 i = 0; i < allFiles.getSize(); ++i) {
-        if (i > 0 && i % 1000 == 0)
-            LOG_INFO("Scanning... {}/{}", i, allFiles.getSize());
-
-        auto result = parser.parseFile(allFiles[i], projectRoot);
-        if (result.isOk()) {
-            auto fileSymbols = dc::move(result).unwrap();
+    for (u32 i = 0; i < nFiles; ++i) {
+        if (results[i].isOk()) {
+            auto fileSymbols = dc::move(results[i]).unwrap();
 
             // Record mtime using relative path (same key as symbol.file).
             if (fileSymbols.getSize() > 0) {
@@ -139,7 +159,6 @@ auto Indexer::incrementalBuild(const std::filesystem::path& projectRoot, const d
 
     dc::Stopwatch timer;
 
-    Parser parser;
     const auto extensions = defaultCppExtensions();
 
     dc::List<std::filesystem::path> scanRoots;
@@ -232,12 +251,29 @@ auto Indexer::incrementalBuild(const std::filesystem::path& projectRoot, const d
         m_symbols.resize(writeIdx);
     }
 
-    // Re-parse changed/new files and insert their symbols.
+    // Re-parse changed/new files in parallel and insert their symbols.
+    const u32 nToParse = static_cast<u32>(filesToParse.getSize());
+    std::vector<dc::Result<dc::List<Symbol>, dc::String>> results;
+    results.reserve(nToParse);
+    for (u32 i = 0; i < nToParse; ++i)
+        results.push_back(dc::Err<dc::String>(dc::String("not started")));
+
+    dc::List<dc::Job> jobs;
+    jobs.reserve(nToParse);
+    for (u32 i = 0; i < nToParse; ++i) {
+        jobs.add(dc::Job { [&, i] {
+            thread_local Parser tlsParser;
+            results[i] = tlsParser.parseFile(filesToParse[i], projectRoot);
+        } });
+    }
+
+    if (jobs.getSize() > 0)
+        m_jobSystem->add(jobs).await();
+
     s64 errorCount = 0;
-    for (u64 i = 0; i < filesToParse.getSize(); ++i) {
-        auto result = parser.parseFile(filesToParse[i], projectRoot);
-        if (result.isOk()) {
-            auto fileSymbols = dc::move(result).unwrap();
+    for (u32 i = 0; i < nToParse; ++i) {
+        if (results[i].isOk()) {
+            auto fileSymbols = dc::move(results[i]).unwrap();
 
             // Update mtime record.
             std::error_code ec;
