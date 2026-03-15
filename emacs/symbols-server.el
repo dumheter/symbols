@@ -18,6 +18,7 @@
 ;;; Code:
 
 (require 'consult)
+(require 'orderless)
 (require 'projectile)
 (require 'json)
 (require 'cl-lib)
@@ -225,13 +226,20 @@ Returns non-nil if the server became ready."
 ;; Symbol display helpers
 
 (defun symbols-server--format-candidate (sym)
-  "Format symbol alist SYM into a display string for consult."
-  (let* ((name (alist-get 'name sym "?"))
-         (kind (alist-get 'kind sym "?"))
-         (file (alist-get 'file sym ""))
-         (line (alist-get 'line sym 0))
+  "Format symbol alist SYM into a plain display string for consult.
+Orderless highlighting is applied separately after formatting."
+  (let* ((name     (alist-get 'name sym "?"))
+         (kind     (alist-get 'kind sym "?"))
+         (file     (alist-get 'file sym ""))
+         (line     (alist-get 'line sym 0))
          (filename (file-name-nondirectory file)))
     (format "%-50s %-10s %s:%s" name kind filename line)))
+
+(defun symbols-server--highlight-candidates (pattern candidates)
+  "Apply orderless match highlighting for PATTERN to each string in CANDIDATES.
+Returns a new list of strings with face text properties set."
+  (when (and candidates (not (string= pattern "")))
+    (orderless-highlight-matches pattern candidates)))
 
 ;; ---------------------------------------------------------------------------
 ;; Navigation / preview (mirrors treesit-utils behavior)
@@ -384,14 +392,23 @@ With prefix argument FORCE-REBUILD, trigger an index rebuild first."
                        (when response
                          (let ((syms (alist-get 'symbols response)))
                            (when (sequencep syms)
-                             (setq results
-                                   (mapcar (lambda (sym)
-                                             (let ((s (symbols-server--format-candidate sym)))
-                                               (put-text-property
-                                                0 (length s)
-                                                'symbols-server--sym sym s)
-                                               s))
-                                           syms)))))
+                             ;; Format, attach metadata, then highlight
+                             (let* ((plain (mapcar (lambda (sym)
+                                                     (let ((s (symbols-server--format-candidate sym)))
+                                                       (put-text-property
+                                                        0 (length s)
+                                                        'symbols-server--sym sym s)
+                                                       s))
+                                                   syms))
+                                    (highlighted (or (symbols-server--highlight-candidates input plain)
+                                                     plain)))
+                               ;; Copy metadata from plain strings to the highlighted copies
+                               (setq results
+                                     (cl-mapcar (lambda (orig hi)
+                                                  (let ((meta (get-text-property 0 'symbols-server--sym orig)))
+                                                    (put-text-property 0 (length hi) 'symbols-server--sym meta hi)
+                                                    hi))
+                                                plain highlighted))))))
                        (setq done t)))
                     ;; Wait synchronously up to 3 seconds for the response
                     (let ((deadline (+ (float-time) 3.0)))
