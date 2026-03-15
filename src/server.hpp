@@ -19,6 +19,7 @@ struct ServerConfig {
     std::filesystem::path projectRoot;
     dc::List<dc::String> searchDirs;
     bool useCache = true;
+    bool diagnostics = false; ///< Enable diagnostics logging (e.g. slowest-files report).
     dc::JobSystem* jobSystem = nullptr; ///< Required: must be non-null when used.
 };
 

@@ -16,6 +16,7 @@ static auto printUsage(const char* programName) -> void
         "  --root <path>       Project root directory (required)\n"
         "  --search-dir <path> Subdirectory to scan (can be repeated)\n"
         "  --no-cache          Disable disk cache\n"
+        "  --diagnostics       Log diagnostics (e.g. slowest files to parse)\n"
         "  --help              Show this help message\n"
         "\n"
         "The server reads JSON requests from stdin and writes\n"

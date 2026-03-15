@@ -51,7 +51,7 @@ auto handleRequest(const Request& req, Indexer& indexer, const ServerConfig& con
 
     case Method::Rebuild: {
         LOG_INFO("Rebuilding index (incremental)...");
-        indexer.incrementalBuild(config.projectRoot, config.searchDirs);
+        indexer.incrementalBuild(config.projectRoot, config.searchDirs, config.diagnostics);
         if (config.useCache) {
             auto r = indexer.saveCache(config.projectRoot);
             if (!r.isOk())
@@ -79,7 +79,7 @@ auto initializeIndex(Indexer& indexer, const ServerConfig& config) -> void
             LOG_INFO("Cache loaded successfully");
         } else {
             LOG_WARNING("Cache load failed, building fresh index");
-            indexer.build(config.projectRoot, config.searchDirs);
+            indexer.build(config.projectRoot, config.searchDirs, config.diagnostics);
             if (config.useCache) {
                 auto r = indexer.saveCache(config.projectRoot);
                 if (!r.isOk())
@@ -88,7 +88,7 @@ auto initializeIndex(Indexer& indexer, const ServerConfig& config) -> void
         }
     } else {
         LOG_INFO("Building index...");
-        indexer.build(config.projectRoot, config.searchDirs);
+        indexer.build(config.projectRoot, config.searchDirs, config.diagnostics);
         if (config.useCache) {
             auto r = indexer.saveCache(config.projectRoot);
             if (!r.isOk())

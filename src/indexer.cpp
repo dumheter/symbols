@@ -66,7 +66,8 @@ auto Indexer::operator=(Indexer&& other) noexcept -> Indexer&
     return *this;
 }
 
-auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc::String>& searchDirs) -> void
+auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc::String>& searchDirs, bool diagnostics)
+    -> void
 {
     dc::Stopwatch timer;
 
@@ -110,18 +111,22 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
         relPaths.push_back(ec ? dc::String(allFiles[i].string().c_str()) : dc::String(rel.generic_string().c_str()));
     }
 
-    std::vector<f32> parseTimes(nFiles, 0.0f);
+    std::vector<f32> parseTimes(diagnostics ? nFiles : 0, 0.0f);
 
     dc::List<dc::Job> jobs;
     jobs.reserve(nFiles);
     for (u32 i = 0; i < nFiles; ++i) {
         jobs.add(dc::Job { [&, i] {
             thread_local Parser tlsParser;
-            dc::Stopwatch sw;
-            sw.start();
-            results[i] = tlsParser.parseFile(allFiles[i], dc::StringView(relPaths[i]));
-            sw.stop();
-            parseTimes[i] = sw.fs();
+            if (diagnostics) {
+                dc::Stopwatch sw;
+                sw.start();
+                results[i] = tlsParser.parseFile(allFiles[i], dc::StringView(relPaths[i]));
+                sw.stop();
+                parseTimes[i] = sw.fs();
+            } else {
+                results[i] = tlsParser.parseFile(allFiles[i], dc::StringView(relPaths[i]));
+            }
         } });
     }
 
@@ -129,7 +134,7 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
         m_jobSystem->add(jobs).await();
 
     // Sort files by parse time descending and log the top 20.
-    {
+    if (diagnostics) {
         std::vector<u32> order(nFiles);
         for (u32 i = 0; i < nFiles; ++i)
             order[i] = i;
@@ -167,12 +172,13 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
     LOG_INFO("Indexed {} symbols from {} files in {:.2f}s ({} errors)", m_symbols.getSize(), allFiles.getSize(),
         timer.fs(), errorCount);
 }
-auto Indexer::incrementalBuild(const std::filesystem::path& projectRoot, const dc::List<dc::String>& searchDirs) -> void
+auto Indexer::incrementalBuild(
+    const std::filesystem::path& projectRoot, const dc::List<dc::String>& searchDirs, bool diagnostics) -> void
 {
     // If we have no existing file records, fall back to a full build.
     if (m_fileRecords.getSize() == 0) {
         LOG_INFO("No existing file records; falling back to full build");
-        build(projectRoot, searchDirs);
+        build(projectRoot, searchDirs, diagnostics);
         return;
     }
 

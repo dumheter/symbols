@@ -40,7 +40,9 @@ public:
     /// @param projectRoot The root directory of the project.
     /// @param searchDirs Optional subdirectories to limit scanning to.
     ///        If empty, scans from projectRoot.
-    auto build(const std::filesystem::path& projectRoot, const dc::List<dc::String>& searchDirs = {}) -> void;
+    /// @param diagnostics When true, logs the slowest files to parse.
+    auto build(const std::filesystem::path& projectRoot, const dc::List<dc::String>& searchDirs = {},
+        bool diagnostics = false) -> void;
 
     /// Incrementally rebuild: re-parse only changed/new files, drop removed files.
     /// Requires that the index has previously been built or loaded from cache.
@@ -48,8 +50,9 @@ public:
     /// @param projectRoot The root directory of the project.
     /// @param searchDirs Optional subdirectories to limit scanning to.
     ///        If empty, scans from projectRoot.
-    auto incrementalBuild(const std::filesystem::path& projectRoot, const dc::List<dc::String>& searchDirs = {})
-        -> void;
+    /// @param diagnostics When true, logs the slowest files to parse.
+    auto incrementalBuild(const std::filesystem::path& projectRoot, const dc::List<dc::String>& searchDirs = {},
+        bool diagnostics = false) -> void;
 
     /// Save the index to a cache file in the project directory.
     /// Returns Ok(true) on success.

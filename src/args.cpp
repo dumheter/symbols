@@ -20,6 +20,8 @@ auto parseArgs(int argc, const char* const* argv) -> dc::Result<ParsedArgs, dc::
             result.config.searchDirs.add(dc::String(argv[++i]));
         } else if (std::strcmp(argv[i], "--no-cache") == 0) {
             result.config.useCache = false;
+        } else if (std::strcmp(argv[i], "--diagnostics") == 0) {
+            result.config.diagnostics = true;
         } else if (std::strcmp(argv[i], "--help") == 0) {
             result.helpRequested = true;
             return dc::Ok<ParsedArgs>(dc::move(result));
