@@ -225,6 +225,14 @@ Returns non-nil if the server became ready."
 ;; ---------------------------------------------------------------------------
 ;; Symbol display helpers
 
+(defun symbols-server--truncate-filepath (path)
+  "Return PATH truncated to at most 50 characters.
+If longer than 50 chars, return \"...\" followed by the last 47 characters,
+preserving the most significant (trailing) portion of the path."
+  (if (> (length path) 50)
+      (concat "..." (substring path (- (length path) 47)))
+    path))
+
 (defun symbols-server--format-candidate (sym)
   "Format symbol alist SYM into a plain display string for consult.
 Orderless highlighting is applied separately after formatting."
@@ -232,8 +240,8 @@ Orderless highlighting is applied separately after formatting."
          (kind     (alist-get 'kind sym "?"))
          (file     (alist-get 'file sym ""))
          (line     (alist-get 'line sym 0))
-         (filename (file-name-nondirectory file)))
-    (format "%-50s %-10s %s:%s" name kind filename line)))
+         (filepath (symbols-server--truncate-filepath file)))
+    (format "%-50s %-10s %s:%s" name kind filepath line)))
 
 (defun symbols-server--highlight-candidates (pattern candidates)
   "Apply orderless match highlighting for PATTERN to each string in CANDIDATES.
