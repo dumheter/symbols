@@ -291,18 +291,18 @@ DTEST(scoreMatchShorterPrefixNameScoresHigher)
 
 DTEST(scoreMatchWordBoundaryBonusRanksHigher)
 {
-    // "gS" should match "getSize" (camelCase word boundary at 'S').
-    // The real project has many getSize functions so it must appear in results.
+    // "iR" should match "isReady" (camelCase word boundary at 'R').
+    // The real project has an isReady function so it must appear in results.
     const auto& indexer = sharedIndexer();
-    const auto results = indexer.search(dc::StringView("gS"), 20);
+    const auto results = indexer.search(dc::StringView("iR"), 20);
     ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
 
-    bool foundGetSize = false;
+    bool foundIsReady = false;
     for (u64 i = 0; i < results.getSize(); ++i) {
-        if (results[i].symbol->name == "getSize")
-            foundGetSize = true;
+        if (results[i].symbol->name == "isReady")
+            foundIsReady = true;
     }
-    ASSERT_TRUE(foundGetSize);
+    ASSERT_TRUE(foundIsReady);
 }
 
 DTEST(scoreMatchConsecutiveCharsBonusRanksHigher)
@@ -415,9 +415,9 @@ DTEST(searchNonMatchingPatternReturnsEmpty)
 
 DTEST(searchResultsAreSortedByScoreDescending)
 {
-    // The real project has many getSize variants; results must be non-increasing by score.
+    // The real project has multiple symbolKind variants; results must be non-increasing by score.
     const auto& indexer = sharedIndexer();
-    const auto results = indexer.search(dc::StringView("getSize"), 20);
+    const auto results = indexer.search(dc::StringView("symbolKind"), 20);
     ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
 
     for (u64 i = 1; i < results.getSize(); ++i) {
@@ -873,24 +873,38 @@ DTEST(multiTokenKindFilterEnum)
 
 DTEST(multiTokenKindFilterAlias)
 {
-    // "char8 alias" — must find the char8 alias in dc/types.hpp, all results are aliases.
-    const auto& indexer = sharedIndexer();
+    // "MyAlias alias" — must find the MyAlias type alias, all results are aliases.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_kind_alias";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "using MyAlias = int; void notAnAlias() {}");
 
-    const auto results = indexer.search(dc::StringView("char8 alias"), 50);
+    Indexer indexer(sharedJobSystem());
+    indexer.build(tempDir);
+
+    const auto results = indexer.search(dc::StringView("MyAlias alias"), 50);
     ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
-    ASSERT_TRUE(hasResult(results, "char8"));
+    ASSERT_TRUE(hasResult(results, "MyAlias"));
     ASSERT_TRUE(allKind(results, SymbolKind::Alias));
+
+    std::filesystem::remove_all(tempDir);
 }
 
 DTEST(multiTokenKindFilterTypedef)
 {
-    // "Scanner typedef" — must find Scanner typedefs, all results are typedefs.
-    const auto& indexer = sharedIndexer();
+    // "MyTypedef typedef" — must find MyTypedef typedefs, all results are typedefs.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_kind_typedef";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "typedef int MyTypedef; void notATypedef() {}");
 
-    const auto results = indexer.search(dc::StringView("Scanner typedef"), 50);
+    Indexer indexer(sharedJobSystem());
+    indexer.build(tempDir);
+
+    const auto results = indexer.search(dc::StringView("MyTypedef typedef"), 50);
     ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
-    ASSERT_TRUE(hasResult(results, "Scanner"));
+    ASSERT_TRUE(hasResult(results, "MyTypedef"));
     ASSERT_TRUE(allKind(results, SymbolKind::Typedef));
+
+    std::filesystem::remove_all(tempDir);
 }
 
 DTEST(multiTokenFileFilter)
