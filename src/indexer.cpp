@@ -5,6 +5,7 @@
 #include <dc/log.hpp>
 #include <dc/time.hpp>
 
+#include <ignore.hpp>
 #include <json.hpp>
 #include <scanner.hpp>
 
@@ -70,6 +71,7 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
     dc::Stopwatch timer;
 
     const auto extensions = defaultCppExtensions();
+    const auto ignoreList = IgnoreList::loadFromDirectory(projectRoot);
 
     dc::List<std::filesystem::path> scanRoots;
     if (searchDirs.getSize() > 0) {
@@ -81,7 +83,7 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
 
     dc::List<std::filesystem::path> allFiles;
     for (u64 i = 0; i < scanRoots.getSize(); ++i) {
-        auto files = scanDirectory(scanRoots[i], extensions);
+        auto files = scanDirectory(scanRoots[i], extensions, ignoreList);
         for (u64 j = 0; j < files.getSize(); ++j)
             allFiles.add(dc::move(files[j]));
     }
@@ -108,17 +110,38 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
         relPaths.push_back(ec ? dc::String(allFiles[i].string().c_str()) : dc::String(rel.generic_string().c_str()));
     }
 
+    std::vector<f32> parseTimes(nFiles, 0.0f);
+
     dc::List<dc::Job> jobs;
     jobs.reserve(nFiles);
     for (u32 i = 0; i < nFiles; ++i) {
         jobs.add(dc::Job { [&, i] {
             thread_local Parser tlsParser;
+            dc::Stopwatch sw;
+            sw.start();
             results[i] = tlsParser.parseFile(allFiles[i], dc::StringView(relPaths[i]));
+            sw.stop();
+            parseTimes[i] = sw.fs();
         } });
     }
 
     if (jobs.getSize() > 0)
         m_jobSystem->add(jobs).await();
+
+    // Sort files by parse time descending and log the top 20.
+    {
+        std::vector<u32> order(nFiles);
+        for (u32 i = 0; i < nFiles; ++i)
+            order[i] = i;
+        std::sort(order.begin(), order.end(), [&](u32 a, u32 b) { return parseTimes[a] > parseTimes[b]; });
+
+        const u32 topN = nFiles < 20 ? nFiles : 20;
+        LOG_INFO("Slowest {} files to parse:", topN);
+        for (u32 r = 0; r < topN; ++r) {
+            const u32 i = order[r];
+            LOG_INFO("  {:6.3f}s  {}", parseTimes[i], relPaths[i].c_str());
+        }
+    }
 
     s64 errorCount = 0;
     for (u32 i = 0; i < nFiles; ++i) {
@@ -156,6 +179,7 @@ auto Indexer::incrementalBuild(const std::filesystem::path& projectRoot, const d
     dc::Stopwatch timer;
 
     const auto extensions = defaultCppExtensions();
+    const auto ignoreList = IgnoreList::loadFromDirectory(projectRoot);
 
     dc::List<std::filesystem::path> scanRoots;
     if (searchDirs.getSize() > 0) {
@@ -167,7 +191,7 @@ auto Indexer::incrementalBuild(const std::filesystem::path& projectRoot, const d
 
     dc::List<std::filesystem::path> allFiles;
     for (u64 i = 0; i < scanRoots.getSize(); ++i) {
-        auto files = scanDirectory(scanRoots[i], extensions);
+        auto files = scanDirectory(scanRoots[i], extensions, ignoreList);
         for (u64 j = 0; j < files.getSize(); ++j)
             allFiles.add(dc::move(files[j]));
     }

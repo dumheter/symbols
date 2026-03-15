@@ -3,10 +3,12 @@
 #include <dc/log.hpp>
 #include <dc/types.hpp>
 
+#include <system_error>
+
 namespace symbols {
 
-[[nodiscard]] auto scanDirectory(const std::filesystem::path& root, const dc::List<dc::String>& extensions)
-    -> dc::List<std::filesystem::path>
+[[nodiscard]] auto scanDirectory(const std::filesystem::path& root, const dc::List<dc::String>& extensions,
+    const IgnoreList& ignoreList) -> dc::List<std::filesystem::path>
 {
     dc::List<std::filesystem::path> files;
 
@@ -42,9 +44,19 @@ namespace symbols {
             }
         }
 
-        if (matched) {
-            files.add(entry.path());
+        if (!matched)
+            continue;
+
+        // Check ignore list using the path relative to root.
+        std::error_code relEc;
+        const auto rel = std::filesystem::relative(entry.path(), root, relEc);
+        if (!relEc) {
+            const dc::String relStr(rel.generic_string().c_str());
+            if (ignoreList.isIgnored(dc::StringView(relStr)))
+                continue;
         }
+
+        files.add(entry.path());
     }
 
     return files;

@@ -78,6 +78,7 @@ target_compile_features(tree-sitter-cpp-grammar PRIVATE c_std_11)
 add_executable(${PROJECT_NAME}
     src/main.cpp
     src/args.cpp
+    src/ignore.cpp
     src/scanner.cpp
     src/parser.cpp
     src/indexer.cpp
@@ -108,7 +109,9 @@ add_executable(test
     tests/protocol.test.cpp
     tests/server.test.cpp
     tests/args.test.cpp
+    tests/ignore.test.cpp
     src/args.cpp
+    src/ignore.cpp
     src/scanner.cpp
     src/parser.cpp
     src/indexer.cpp

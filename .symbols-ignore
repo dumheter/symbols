@@ -1,0 +1,5 @@
+# Ignore generated build output — FetchContent deps live here and are not
+# project source. The tree-sitter grammar parser.c alone is 500k+ lines and
+# would dominate index time.
+build/*
+build_release/*
