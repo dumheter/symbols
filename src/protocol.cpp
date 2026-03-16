@@ -32,6 +32,12 @@ auto parseRequest(dc::StringView jsonLine) -> dc::Result<Request, dc::String>
         req.method = Method::Status;
     } else if (dc::String(methodStr) == "rebuild") {
         req.method = Method::Rebuild;
+    } else if (dc::String(methodStr) == "rebuildFile") {
+        req.method = Method::RebuildFile;
+
+        const JsonValue* params = root.get("params");
+        if (params)
+            req.file = dc::String(params->getString("file"));
     } else if (dc::String(methodStr) == "shutdown") {
         req.method = Method::Shutdown;
     } else {

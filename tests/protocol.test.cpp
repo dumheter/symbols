@@ -56,6 +56,27 @@ DTEST(parseRequestRebuildMethod)
     ASSERT_EQ(req.method, Method::Rebuild);
 }
 
+DTEST(parseRequestRebuildFileMethod)
+{
+    auto result
+        = parseRequest(dc::StringView(R"({"id":12,"method":"rebuildFile","params":{"file":"/project/src/foo.cpp"}})"));
+    ASSERT_TRUE(result.isOk());
+    auto req = dc::move(result).unwrap();
+    ASSERT_EQ(req.id, static_cast<s64>(12));
+    ASSERT_EQ(req.method, Method::RebuildFile);
+    ASSERT_TRUE(req.file == "/project/src/foo.cpp");
+}
+
+DTEST(parseRequestRebuildFileNoParams)
+{
+    // rebuildFile with no params block — file is empty string.
+    auto result = parseRequest(dc::StringView(R"({"id":13,"method":"rebuildFile"})"));
+    ASSERT_TRUE(result.isOk());
+    auto req = dc::move(result).unwrap();
+    ASSERT_EQ(req.method, Method::RebuildFile);
+    ASSERT_EQ(req.file.getSize(), static_cast<usize>(0));
+}
+
 DTEST(parseRequestShutdownMethod)
 {
     auto result = parseRequest(dc::StringView(R"({"id":99,"method":"shutdown"})"));

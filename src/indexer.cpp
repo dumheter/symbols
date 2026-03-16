@@ -337,6 +337,66 @@ auto Indexer::incrementalBuild(
         errorCount);
 }
 
+auto Indexer::rebuildFile(const std::filesystem::path& absolutePath, const std::filesystem::path& projectRoot) -> void
+{
+    if (!m_ready) {
+        LOG_WARNING("rebuildFile called before index is ready; ignoring");
+        return;
+    }
+
+    // Compute the relative key used in the index.
+    std::error_code ec;
+    const auto rel = std::filesystem::relative(absolutePath, projectRoot, ec);
+    const dc::String relKey = ec ? dc::String(absolutePath.string().c_str()) : dc::String(rel.generic_string().c_str());
+
+    // Evict all existing symbols for this file.
+    {
+        u64 writeIdx = 0;
+        for (u64 i = 0; i < m_symbols.getSize(); ++i) {
+            if (!(m_symbols[i].file == relKey)) {
+                if (writeIdx != i)
+                    m_symbols[writeIdx] = dc::move(m_symbols[i]);
+                ++writeIdx;
+            }
+        }
+        m_symbols.resize(writeIdx);
+    }
+
+    // If the file no longer exists on disk, just remove its record and return.
+    if (!std::filesystem::exists(absolutePath)) {
+        m_fileRecords.removeIf([&](const dc::Map<dc::String, FileRecord>::Entry& e) { return e.key == relKey; });
+        LOG_INFO("rebuildFile: evicted deleted file {}", relKey.c_str());
+        return;
+    }
+
+    // Re-parse the single file.
+    Parser parser;
+    auto parseResult = parser.parseFile(absolutePath, dc::StringView(relKey));
+    if (!parseResult.isOk()) {
+        LOG_WARNING("rebuildFile: parse error for {}", relKey.c_str());
+        return;
+    }
+
+    auto newSymbols = dc::move(parseResult).unwrap();
+
+    // Update mtime record.
+    const s64 mtime = getFileMtime(absolutePath);
+    auto* rec = m_fileRecords.tryGet(relKey);
+    if (rec) {
+        rec->value.mtime = mtime;
+    } else {
+        auto* newRec = m_fileRecords.insert(relKey);
+        if (newRec)
+            newRec->mtime = mtime;
+        ++m_fileCount;
+    }
+
+    for (u64 i = 0; i < newSymbols.getSize(); ++i)
+        m_symbols.add(dc::move(newSymbols[i]));
+
+    LOG_INFO("rebuildFile: updated {} ({} symbols total)", relKey.c_str(), m_symbols.getSize());
+}
+
 auto Indexer::saveCache(const std::filesystem::path& projectRoot) -> dc::Result<bool, dc::String>
 {
     const auto cacheDir = projectRoot / kCacheDir;

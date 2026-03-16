@@ -8,6 +8,7 @@
 
 #include <filesystem>
 #include <sstream>
+#include <vector>
 
 using namespace symbols;
 
@@ -562,4 +563,158 @@ DTEST(runServerLoopReturnsErrorOnBadJson)
     ASSERT_TRUE(parseResult.isOk());
     const auto val = dc::move(parseResult).unwrap();
     ASSERT_TRUE(val.getString("error").getSize() > static_cast<usize>(0));
+}
+
+// ---------------------------------------------------------------------------
+// handleRequest — Method::RebuildFile
+// ---------------------------------------------------------------------------
+
+DTEST(handleRequestRebuildFileReturnsAck)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_rbfile_ack";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void ackFunc() {}");
+
+    Indexer indexer(sharedJobSystem());
+    indexer.build(tempDir);
+
+    ServerConfig config;
+    config.projectRoot = tempDir;
+    config.useCache = false;
+
+    Request req;
+    req.id = 20;
+    req.method = Method::RebuildFile;
+    req.file = dc::String((tempDir / "a.cpp").string().c_str());
+    req.limit = 200;
+
+    const dc::String response = handleRequest(req, indexer, config);
+
+    auto parseResult = JsonValue::parse(dc::StringView(response));
+    ASSERT_TRUE(parseResult.isOk());
+    const auto val = dc::move(parseResult).unwrap();
+    ASSERT_EQ(val.getNumber("id"), static_cast<s64>(20));
+    ASSERT_TRUE(dc::String(val.getString("status")) == "rebuilt");
+    ASSERT_TRUE(val.get("error") == nullptr);
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(handleRequestRebuildFileEmptyPathReturnsError)
+{
+    Indexer indexer(sharedJobSystem());
+
+    ServerConfig config;
+    config.projectRoot = std::filesystem::temp_directory_path();
+    config.useCache = false;
+
+    Request req;
+    req.id = 21;
+    req.method = Method::RebuildFile;
+    // file is intentionally left empty
+    req.limit = 200;
+
+    const dc::String response = handleRequest(req, indexer, config);
+
+    auto parseResult = JsonValue::parse(dc::StringView(response));
+    ASSERT_TRUE(parseResult.isOk());
+    const auto val = dc::move(parseResult).unwrap();
+    ASSERT_EQ(val.getNumber("id"), static_cast<s64>(21));
+    ASSERT_TRUE(val.getString("error").getSize() > static_cast<usize>(0));
+}
+
+DTEST(handleRequestRebuildFileUpdatesSymbols)
+{
+    // Simulate the Emacs on-save hook: write a file, build the index,
+    // overwrite the file with new content, send rebuildFile — the updated
+    // symbol must now appear and the old one must be gone.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_rbfile_update";
+    std::filesystem::create_directories(tempDir);
+    const auto filePath = tempDir / "a.cpp";
+    writeTempFile(filePath, "void beforeSave() {}");
+
+    Indexer indexer(sharedJobSystem());
+    indexer.build(tempDir);
+    ASSERT_TRUE(indexer.search(dc::StringView("beforeSave"), 5).getSize() >= static_cast<u64>(1));
+
+    // User edits and saves the file.
+    writeTempFile(filePath, "void afterSave() {}");
+
+    ServerConfig config;
+    config.projectRoot = tempDir;
+    config.useCache = false;
+
+    Request req;
+    req.id = 22;
+    req.method = Method::RebuildFile;
+    req.file = dc::String(filePath.string().c_str());
+    req.limit = 200;
+
+    [[maybe_unused]] const dc::String response = handleRequest(req, indexer, config);
+
+    // Old symbol gone, new symbol present.
+    ASSERT_EQ(indexer.search(dc::StringView("beforeSave"), 5).getSize(), static_cast<u64>(0));
+    ASSERT_TRUE(indexer.search(dc::StringView("afterSave"), 5).getSize() >= static_cast<u64>(1));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+// ---------------------------------------------------------------------------
+// runServerLoop — rebuildFile via JSON protocol (on-save integration)
+// ---------------------------------------------------------------------------
+
+DTEST(runServerLoopRebuildFileMidSessionUpdatesSymbol)
+{
+    // Full end-to-end: index a file, overwrite it, send rebuildFile through
+    // the JSON loop, then query to confirm the index reflects the new content.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_rbfile_loop";
+    std::filesystem::create_directories(tempDir);
+    const auto filePath = tempDir / "a.cpp";
+    writeTempFile(filePath, "void oldFunc() {}");
+
+    Indexer indexer(sharedJobSystem());
+    indexer.build(tempDir);
+
+    // Overwrite the file before sending rebuildFile (simulates user saving).
+    writeTempFile(filePath, "void newFunc() {}");
+
+    ServerConfig config;
+    config.projectRoot = tempDir;
+    config.useCache = false;
+
+    // Build the rebuildFile JSON with the absolute path (forward slashes for JSON safety).
+    const std::string rebuildMsg
+        = std::string(R"({"id":1,"method":"rebuildFile","params":{"file":")") + filePath.generic_string() + R"("}})";
+
+    std::istringstream in(rebuildMsg + "\n" + R"({"id":2,"method":"query","params":{"pattern":"newFunc","limit":10}})"
+        + "\n" + R"({"id":3,"method":"shutdown"})" + "\n");
+    std::ostringstream out;
+
+    [[maybe_unused]] const auto ret = runServerLoop(in, out, indexer, config);
+
+    // Collect response lines.
+    const std::string output = out.str();
+    std::vector<std::string> lines;
+    std::istringstream lineStream(output);
+    std::string l;
+    while (std::getline(lineStream, l)) {
+        if (!l.empty() && l.back() == '\r')
+            l.pop_back();
+        if (!l.empty())
+            lines.push_back(l);
+    }
+    // 3 responses: rebuildFile ack, query result, shutdown ack.
+    ASSERT_EQ(lines.size(), static_cast<usize>(3));
+
+    // id:2 query must find the new symbol.
+    auto parseResult = JsonValue::parse(dc::StringView(lines[1].c_str(), static_cast<u64>(lines[1].size())));
+    ASSERT_TRUE(parseResult.isOk());
+    const auto val = dc::move(parseResult).unwrap();
+    ASSERT_EQ(val.getNumber("id"), static_cast<s64>(2));
+    const JsonValue* syms = val.get("symbols");
+    ASSERT_TRUE(syms != nullptr);
+    ASSERT_TRUE(syms->arraySize() >= static_cast<usize>(1));
+    ASSERT_TRUE(dc::String(syms->at(0).getString("name")) == "newFunc");
+
+    std::filesystem::remove_all(tempDir);
 }

@@ -13,6 +13,7 @@ enum class Method : u8 {
     Query,
     Status,
     Rebuild,
+    RebuildFile,
     Shutdown,
     Unknown,
 };
@@ -23,6 +24,7 @@ struct Request {
     Method method;
     dc::String pattern; // For Query method.
     s64 limit; // For Query method (default 200).
+    dc::String file; // For RebuildFile method: absolute path to the file.
 };
 
 /// Parse a JSON line into a Request.

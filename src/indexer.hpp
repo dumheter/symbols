@@ -54,6 +54,14 @@ public:
     auto incrementalBuild(const std::filesystem::path& projectRoot, const dc::List<dc::String>& searchDirs = {},
         bool diagnostics = false) -> void;
 
+    /// Re-parse a single file and update the index in place.
+    /// The file path may be absolute or relative to projectRoot.
+    /// If the file has been deleted, its symbols are evicted and no re-parse occurs.
+    /// Does nothing if the index has never been built (isReady() == false).
+    /// @param absolutePath  Absolute path to the file on disk.
+    /// @param projectRoot   Project root used to compute the relative key stored in the index.
+    auto rebuildFile(const std::filesystem::path& absolutePath, const std::filesystem::path& projectRoot) -> void;
+
     /// Save the index to a cache file in the project directory.
     /// Returns Ok(true) on success.
     [[nodiscard]] auto saveCache(const std::filesystem::path& projectRoot) -> dc::Result<bool, dc::String>;

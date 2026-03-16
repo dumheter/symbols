@@ -60,6 +60,14 @@ auto handleRequest(const Request& req, Indexer& indexer, const ServerConfig& con
         return buildAckResponse(req.id, "rebuilt");
     }
 
+    case Method::RebuildFile: {
+        if (req.file.getSize() == 0)
+            return buildErrorResponse(req.id, "rebuildFile requires a non-empty file path");
+        LOG_INFO("Rebuilding single file: {}", req.file.c_str());
+        indexer.rebuildFile(std::filesystem::path(req.file.c_str()), config.projectRoot);
+        return buildAckResponse(req.id, "rebuilt");
+    }
+
     case Method::Shutdown:
         return buildAckResponse(req.id, "shutdown");
 

@@ -8,12 +8,18 @@
 ;;   Request:  {"id":N,"method":"query","params":{"pattern":"...","limit":200}}
 ;;   Response: {"id":N,"symbols":[{"name":"...","kind":"...","file":"...","line":N,"score":N},...]}
 ;;
+;;   Single-file rebuild (on save):
+;;   Request:  {"id":N,"method":"rebuildFile","params":{"file":"/abs/path/to/file.cpp"}}
+;;   Response: {"id":N,"status":"rebuilt"}
+;;
 ;; On startup the server emits an id:0 status line once the index is ready:
 ;;   {"id":0,"status":"ready","files":171,"symbols":3015}
 ;;
 ;; Usage:
 ;;   M-s M-s  -> symbols-server-find-symbols
 ;;   C-u M-s M-s -> force index rebuild before searching
+;;   M-.      -> xref definitions  (via xref backend)
+;;   M-,      -> xref-go-back  (standard xref; returns from M-. jump)
 
 ;;; Code:
 
@@ -22,15 +28,15 @@
 (require 'projectile)
 (require 'json)
 (require 'cl-lib)
+(require 'xref)
 
 ;; ---------------------------------------------------------------------------
 ;; Customization
 
 (defcustom symbols-server-executable
-  (if (eq system-type 'windows-nt)
-      "C:/dev/symbols/build/symbols.exe"
-    "/usr/local/bin/symbols")
-  "Path to the symbols server executable."
+  (or (executable-find "symbols") "symbols")
+  "Path to the symbols server executable.
+Must be on PATH as \"symbols\" (or \"symbols.exe\" on Windows)."
   :type 'string
   :group 'symbols-server)
 
@@ -52,6 +58,13 @@
 (defcustom symbols-server-ready-timeout 300
   "Seconds to wait for the server to emit its id:0 ready line."
   :type 'integer
+  :group 'symbols-server)
+
+(defcustom symbols-server-auto-rebuild-on-save t
+  "If non-nil, send a rebuildFile request whenever a C/C++ file in the project is saved.
+Only the saved file is re-parsed; the rest of the index is untouched.
+Set to nil to disable automatic single-file rebuilds on save."
+  :type 'boolean
   :group 'symbols-server)
 
 ;; ---------------------------------------------------------------------------
@@ -211,9 +224,18 @@ Returns non-nil if the server became ready."
     (symbols-server--send state msg)))
 
 (defun symbols-server--send-rebuild (state)
-  "Send a rebuild request to STATE."
+  "Send a full incremental rebuild request to STATE."
   (let* ((id  (symbols-server--next-id state))
          (msg (json-serialize `((id . ,id) (method . "rebuild")))))
+    (symbols-server--send state msg)))
+
+(defun symbols-server--send-rebuild-file (state file)
+  "Send a single-file rebuild request for FILE to STATE.
+FILE must be an absolute path string."
+  (let* ((id  (symbols-server--next-id state))
+         (msg (json-serialize `((id . ,id)
+                                (method . "rebuildFile")
+                                (params . ((file . ,file)))))))
     (symbols-server--send state msg)))
 
 (defun symbols-server--send-shutdown (state)
@@ -368,6 +390,160 @@ PROJECT-ROOT is prepended to relative file paths from the server."
       (expand-file-name "Code/DICE/Extensions/BattlefieldOnline" project-root))))
 
 ;; ---------------------------------------------------------------------------
+;; Auto-rebuild-on-save hook
+
+(defconst symbols-server--cpp-extensions
+  '("c" "cc" "cpp" "cxx" "h" "hpp" "hxx" "ixx")
+  "File extensions treated as C/C++ source files for auto-rebuild purposes.")
+
+(defun symbols-server--cpp-file-p (filename)
+  "Return non-nil if FILENAME has a C/C++ extension."
+  (when filename
+    (let ((ext (file-name-extension filename)))
+      (and ext (member (downcase ext) symbols-server--cpp-extensions)))))
+
+(defun symbols-server--after-save-hook ()
+  "Hook for `after-save-hook': re-parse the saved file in the server index.
+Only fires when `symbols-server-auto-rebuild-on-save' is non-nil, the buffer
+visits a C/C++ file, and a live server already exists for this project.
+The absolute path of the saved file is sent so only that one file is re-parsed."
+  (when (and symbols-server-auto-rebuild-on-save
+             (buffer-file-name)
+             (symbols-server--cpp-file-p (buffer-file-name)))
+    (condition-case nil
+        (let* ((root (and (fboundp 'projectile-project-root)
+                          (projectile-project-root)))
+               (state (and root (gethash root symbols-server--servers))))
+          (when (and state
+                     (symbols-server--state-ready state)
+                     (process-live-p (symbols-server--state-process state)))
+            (symbols-server--send-rebuild-file
+             state
+             (expand-file-name (buffer-file-name)))))
+      ;; Swallow any error so hooks never break normal save behavior.
+      (error nil))))
+
+;; Register the hook globally so it fires in every buffer.
+(add-hook 'after-save-hook #'symbols-server--after-save-hook)
+
+;; ---------------------------------------------------------------------------
+;; xref backend
+
+(defun symbols-server--xref-backend ()
+  "Return the symbols-server xref backend when a live server exists for this project."
+  (condition-case nil
+      (when (fboundp 'projectile-project-root)
+        (let* ((root  (projectile-project-root))
+               (state (gethash root symbols-server--servers)))
+          (when (and state
+                     (symbols-server--state-ready state)
+                     (process-live-p (symbols-server--state-process state)))
+            'symbols-server)))
+    (error nil)))
+
+;; Register our backend in xref's dispatch list.
+;; It runs before etags/elisp but only activates when a live server exists.
+(add-hook 'xref-backend-functions #'symbols-server--xref-backend)
+
+(cl-defmethod xref-backend-identifier-at-point ((_backend (eql symbols-server)))
+  "Return the symbol name at point for the symbols-server backend."
+  (thing-at-point 'symbol t))
+
+(cl-defmethod xref-backend-identifier-completion-table ((_backend (eql symbols-server)))
+  "Return nil; we do not support identifier completion via xref."
+  nil)
+
+(cl-defmethod xref-backend-definitions ((_backend (eql symbols-server)) identifier)
+  "Find definitions of IDENTIFIER using the symbols server."
+  (condition-case err
+      (let* ((root  (projectile-project-root))
+             (state (gethash root symbols-server--servers)))
+        (unless (and state
+                     (symbols-server--state-ready state)
+                     (process-live-p (symbols-server--state-process state)))
+          (user-error "symbols-server: no live server for this project"))
+        ;; Query synchronously (up to 3 s) with exact-match priority.
+        (let ((results nil)
+              (done nil))
+          (symbols-server--send-query
+           state identifier symbols-server-default-limit
+           (lambda (response)
+             (setq results response
+                   done    t)))
+          (let ((deadline (+ (float-time) 3.0)))
+            (while (and (not done) (< (float-time) deadline))
+              (accept-process-output (symbols-server--state-process state) 0.05)))
+          ;; Convert matching symbols to xref-location objects.
+          (when results
+            (let ((syms (alist-get 'symbols results)))
+              (when (sequencep syms)
+                ;; Keep only symbols whose name matches the identifier exactly
+                ;; (case-insensitive), then fall back to all results if none do.
+                (let* ((exact (cl-remove-if-not
+                                (lambda (sym)
+                                  (string= (downcase (alist-get 'name sym ""))
+                                           (downcase identifier)))
+                                syms))
+                       (candidates (if exact exact syms)))
+                  (mapcar (lambda (sym)
+                            (let* ((file-raw (alist-get 'file sym ""))
+                                   (file (if (file-name-absolute-p file-raw)
+                                             file-raw
+                                           (expand-file-name file-raw root)))
+                                   (line (alist-get 'line sym 1))
+                                   (name (alist-get 'name sym ""))
+                                   (kind (alist-get 'kind sym ""))
+                                   (summary (format "%s [%s]" name kind)))
+                              (xref-make summary
+                                         (xref-make-file-location file line 0))))
+                          candidates)))))))
+    (error
+     (message "symbols-server xref: %s" (error-message-string err))
+     nil)))
+
+(cl-defmethod xref-backend-references ((_backend (eql symbols-server)) _identifier)
+  "References lookup is not supported; return nil to fall through to the next backend."
+  nil)
+
+(cl-defmethod xref-backend-apropos ((_backend (eql symbols-server)) pattern)
+  "Return xref locations for all symbols matching PATTERN."
+  (condition-case err
+      (let* ((root  (projectile-project-root))
+             (state (gethash root symbols-server--servers)))
+        (unless (and state
+                     (symbols-server--state-ready state)
+                     (process-live-p (symbols-server--state-process state)))
+          (user-error "symbols-server: no live server for this project"))
+        (let ((results nil)
+              (done nil))
+          (symbols-server--send-query
+           state pattern symbols-server-default-limit
+           (lambda (response)
+             (setq results response
+                   done    t)))
+          (let ((deadline (+ (float-time) 3.0)))
+            (while (and (not done) (< (float-time) deadline))
+              (accept-process-output (symbols-server--state-process state) 0.05)))
+          (when results
+            (let ((syms (alist-get 'symbols results)))
+              (when (sequencep syms)
+                (mapcar (lambda (sym)
+                          (let* ((file-raw (alist-get 'file sym ""))
+                                 (file (if (file-name-absolute-p file-raw)
+                                           file-raw
+                                         (expand-file-name file-raw root)))
+                                 (line (alist-get 'line sym 1))
+                                 (name (alist-get 'name sym ""))
+                                 (kind (alist-get 'kind sym ""))
+                                 (summary (format "%s [%s]" name kind)))
+                            (xref-make summary
+                                       (xref-make-file-location file line 0))))
+                        syms))))))
+    (error
+     (message "symbols-server xref: %s" (error-message-string err))
+     nil)))
+
+;; ---------------------------------------------------------------------------
 ;; Entry point
 
 ;;;###autoload
@@ -416,7 +592,7 @@ With prefix argument FORCE-REBUILD, trigger an index rebuild first."
                                                   (let ((meta (get-text-property 0 'symbols-server--sym orig)))
                                                     (put-text-property 0 (length hi) 'symbols-server--sym meta hi)
                                                     hi))
-                                                plain highlighted))))))
+                                                plain highlighted)))))
                        (setq done t)))
                     ;; Wait synchronously up to 3 seconds for the response
                     (let ((deadline (+ (float-time) 3.0)))
