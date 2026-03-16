@@ -362,12 +362,11 @@ auto Parser::operator=(Parser&& other) noexcept -> Parser&
     const dc::String relativePathStr(relativePath);
 
     // Execute query.
-    // Limit the cursor to nodes that *start* at or above depth 8 relative to
-    // the translation-unit root.  Top-level and namespace-scoped symbols live
-    // at depth 0–6; this prevents the cursor from descending into the bodies
-    // of functions (where the bulk of AST nodes live) while still capturing
-    // all symbols we care about.
-    ts_query_cursor_set_max_start_depth(m_impl->cursor, 8);
+    // Limit the cursor to nodes that start reasonably close to the
+    // translation-unit root. This still avoids descending into the bulk of
+    // function-body ASTs while leaving room for declarations nested inside
+    // several namespaces and a class body, such as pure virtual methods.
+    ts_query_cursor_set_max_start_depth(m_impl->cursor, 16);
     ts_query_cursor_exec(m_impl->cursor, m_impl->query, root);
 
     TSQueryMatch match;

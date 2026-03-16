@@ -513,6 +513,38 @@ class Widget {
     ASSERT_TRUE(foundGetWidth);
 }
 
+DTEST(parseDeeplyNestedPureVirtualMethodDeclaration)
+{
+    const auto symbols = parseSourceString(R"(
+namespace one {
+namespace two {
+namespace three {
+namespace four {
+namespace five {
+class RewardProvider {
+public:
+    virtual mc::async_future<eastl::vector<PositionReward>> fetchTopRewards(
+        const eastl::string& competitiveSeasonId,
+        const eastl::string& gameMode) = 0;
+};
+}
+}
+}
+}
+}
+)");
+
+    bool found = false;
+    for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "fetchTopRewards" && symbols[i].kind == SymbolKind::Function) {
+            found = true;
+            break;
+        }
+    }
+
+    ASSERT_TRUE(found);
+}
+
 // ---------------------------------------------------------------------------
 // stringToSymbolKind fallback (tasks 7a–7b)
 // ---------------------------------------------------------------------------
