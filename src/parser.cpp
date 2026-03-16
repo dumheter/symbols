@@ -59,8 +59,9 @@ namespace symbols {
 // Tree-sitter query for extracting C++ symbols.
 // Captures: functions (including methods and function templates),
 // classes/structs (including class/struct templates), enums,
-// type aliases (using =), typedefs, #define macros, and variables
-// (global, constexpr, const, and static).
+// type aliases (using =), typedefs, #define macros, and variables.
+// Variable captures are filtered after matching so only globals and
+// constexpr variables are indexed.
 static constexpr const char* kCppSymbolQuery = R"(
 (function_definition
   declarator: (function_declarator
@@ -169,6 +170,68 @@ static auto captureNameToKind(const char* name, u32 len) -> SymbolKind
     if (svEquals(sv, "variable"))
         return SymbolKind::Variable;
     return SymbolKind::Function;
+}
+
+static auto nodeTypeEquals(TSNode node, const char* type) -> bool
+{
+    return std::strcmp(ts_node_type(node), type) == 0;
+}
+
+static auto findAncestorDeclaration(TSNode node) -> TSNode
+{
+    TSNode current = node;
+    while (!ts_node_is_null(current)) {
+        if (nodeTypeEquals(current, "declaration"))
+            return current;
+        current = ts_node_parent(current);
+    }
+
+    return {};
+}
+
+static auto declarationHasConstexpr(TSNode declaration, const char* source) -> bool
+{
+    const u32 childCount = ts_node_child_count(declaration);
+    for (u32 i = 0; i < childCount; ++i) {
+        const TSNode child = ts_node_child(declaration, i);
+        if (ts_node_is_null(child))
+            continue;
+
+        if (nodeTypeEquals(child, "constexpr"))
+            return true;
+
+        const u32 start = ts_node_start_byte(child);
+        const u32 end = ts_node_end_byte(child);
+        const u32 size = end - start;
+        if (size == 9 && std::memcmp(source + start, "constexpr", 9) == 0)
+            return true;
+    }
+
+    return false;
+}
+
+static auto declarationIsGlobal(TSNode declaration) -> bool
+{
+    TSNode current = ts_node_parent(declaration);
+    while (!ts_node_is_null(current)) {
+        if (nodeTypeEquals(current, "compound_statement"))
+            return false;
+        current = ts_node_parent(current);
+    }
+
+    return true;
+}
+
+static auto shouldIndexVariable(TSNode capturedNode, const char* source) -> bool
+{
+    const TSNode declaration = findAncestorDeclaration(capturedNode);
+    if (ts_node_is_null(declaration))
+        return false;
+
+    if (declarationHasConstexpr(declaration, source))
+        return true;
+
+    return declarationIsGlobal(declaration);
 }
 
 /// Extract the symbol name from a node's byte range within the source buffer.
@@ -325,6 +388,9 @@ auto Parser::operator=(Parser&& other) noexcept -> Parser&
 
             // Skip forward declarations.
             if (isForwardDeclaration(kind, node))
+                continue;
+
+            if (kind == SymbolKind::Variable && !shouldIndexVariable(node, sourcePtr))
                 continue;
 
             CaptureInfo cap;

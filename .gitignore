@@ -16,3 +16,7 @@
 
 # local deploy configuration (machine-specific, not tracked)
 emacs/deploy.local
+
+# local build and cache output
+.cache/
+build/

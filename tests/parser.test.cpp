@@ -311,6 +311,53 @@ constexpr float kGravity = 9.81f;
     ASSERT_TRUE(foundGravity);
 }
 
+DTEST(localVariablesSkippedUnlessConstexpr)
+{
+    const auto symbols = parseSourceString(R"(
+void foo()
+{
+    int localVar = 42;
+    const int constOnly = 7;
+    constexpr int kLocalLimit = 9;
+}
+)");
+
+    bool foundLocalVar = false;
+    bool foundConstOnly = false;
+    bool foundLocalLimit = false;
+    for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "localVar" && symbols[i].kind == SymbolKind::Variable)
+            foundLocalVar = true;
+        if (symbols[i].name == "constOnly" && symbols[i].kind == SymbolKind::Variable)
+            foundConstOnly = true;
+        if (symbols[i].name == "kLocalLimit" && symbols[i].kind == SymbolKind::Variable)
+            foundLocalLimit = true;
+    }
+
+    ASSERT_FALSE(foundLocalVar);
+    ASSERT_FALSE(foundConstOnly);
+    ASSERT_TRUE(foundLocalLimit);
+}
+
+DTEST(namespaceVariableIndexed)
+{
+    const auto symbols = parseSourceString(R"(
+namespace outer {
+int namespacedVar = 42;
+}
+)");
+
+    bool found = false;
+    for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "namespacedVar" && symbols[i].kind == SymbolKind::Variable) {
+            found = true;
+            break;
+        }
+    }
+
+    ASSERT_TRUE(found);
+}
+
 DTEST(macroIndexed)
 {
     const auto symbols = parseSourceString(R"(

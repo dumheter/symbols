@@ -298,6 +298,7 @@ alive until Emacs exits or you call `symbols-server-shutdown`.
 | `enum_specifier` | `enum` | Plain and `enum class`/`enum struct` |
 | `alias_declaration` | `alias` | `using Foo = ...;` |
 | `type_definition` | `typedef` | `typedef ... Foo;` |
+| variable declarations | `variable` | Only `constexpr` variables and variables at global / namespace scope are indexed; regular local variables are skipped |
 
 ---
 
