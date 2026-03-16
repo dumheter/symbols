@@ -71,6 +71,11 @@ static constexpr const char* kCppSymbolQuery = R"(
   declarator: (function_declarator
     declarator: (_) @func))
 
+(declaration
+  declarator: (init_declarator
+    declarator: (function_declarator
+      declarator: (_) @func)))
+
 (field_declaration
   declarator: (function_declarator
     declarator: (_) @func))
@@ -84,6 +89,12 @@ static constexpr const char* kCppSymbolQuery = R"(
   (declaration
     declarator: (function_declarator
       declarator: (_) @func)))
+
+(template_declaration
+  (declaration
+    declarator: (init_declarator
+      declarator: (function_declarator
+        declarator: (_) @func))))
 
 (class_specifier
   name: (type_identifier) @class)

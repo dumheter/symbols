@@ -545,6 +545,37 @@ public:
     ASSERT_TRUE(found);
 }
 
+DTEST(parsePureVirtualMethodDeclarationInMacroDecoratedClass)
+{
+    const auto symbols = parseSourceString(R"(
+namespace fb::diceOnline {
+class FB_BATTLEFIELDONLINE_API ClientCompetitiveRankInterface
+{
+public:
+    virtual eastl::vector<PositionReward> getTopRewards(
+        const eastl::string& competitiveSeasonId,
+        const eastl::string& gameMode) const = 0;
+
+    virtual mc::async_future<eastl::vector<PositionReward>> fetchTopRewards(
+        const eastl::string& competitiveSeasonId,
+        const eastl::string& gameMode) = 0;
+};
+}
+)");
+
+    bool foundGetTopRewards = false;
+    bool foundFetchTopRewards = false;
+    for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "getTopRewards" && symbols[i].kind == SymbolKind::Function)
+            foundGetTopRewards = true;
+        if (symbols[i].name == "fetchTopRewards" && symbols[i].kind == SymbolKind::Function)
+            foundFetchTopRewards = true;
+    }
+
+    ASSERT_TRUE(foundGetTopRewards);
+    ASSERT_TRUE(foundFetchTopRewards);
+}
+
 // ---------------------------------------------------------------------------
 // stringToSymbolKind fallback (tasks 7a–7b)
 // ---------------------------------------------------------------------------
