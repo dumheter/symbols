@@ -563,43 +563,46 @@ With prefix argument FORCE-REBUILD, trigger an index rebuild first."
                          ;; Give it a moment so the rebuild ack comes back before we query
                          (sit-for 0.5))))
     (let* ((last-candidates nil)
+           (collection
+            (consult--dynamic-collection
+             (lambda (input)
+               (when (and input (not (string= input "")))
+                 (let ((results nil)
+                       (done nil))
+                   (symbols-server--send-query
+                    state input symbols-server-default-limit
+                    (lambda (response)
+                      (when response
+                        (let ((syms (alist-get 'symbols response)))
+                          (when (sequencep syms)
+                            ;; Format, attach metadata, then highlight
+                            (let* ((plain (mapcar (lambda (sym)
+                                                    (let ((s (symbols-server--format-candidate sym)))
+                                                      (put-text-property
+                                                       0 (length s)
+                                                       'symbols-server--sym sym s)
+                                                      s))
+                                                  syms))
+                                   (highlighted (or (symbols-server--highlight-candidates input plain)
+                                                    plain)))
+                              ;; Copy metadata from plain strings to the highlighted copies
+                              (setq results
+                                    (cl-mapcar (lambda (orig hi)
+                                                 (let ((meta (get-text-property 0 'symbols-server--sym orig)))
+                                                   (put-text-property 0 (length hi) 'symbols-server--sym meta hi)
+                                                   hi))
+                                               plain highlighted))))))
+                      (setq done t)))
+                   ;; Wait synchronously up to 3 seconds for the response
+                   (let ((deadline (+ (float-time) 3.0)))
+                     (while (and (not done) (< (float-time) deadline))
+                       (accept-process-output (symbols-server--state-process state) 0.05)))
+                   (setq last-candidates results)
+                   results)))
+             :min-input 1))
            (selected
             (consult--read
-             (consult--dynamic-collection
-              (lambda (input)
-                (when (and input (not (string= input "")))
-                  (let ((results nil)
-                        (done nil))
-                    (symbols-server--send-query
-                     state input symbols-server-default-limit
-                     (lambda (response)
-                       (when response
-                         (let ((syms (alist-get 'symbols response)))
-                           (when (sequencep syms)
-                             ;; Format, attach metadata, then highlight
-                             (let* ((plain (mapcar (lambda (sym)
-                                                     (let ((s (symbols-server--format-candidate sym)))
-                                                       (put-text-property
-                                                        0 (length s)
-                                                        'symbols-server--sym sym s)
-                                                       s))
-                                                   syms))
-                                    (highlighted (or (symbols-server--highlight-candidates input plain)
-                                                     plain)))
-                               ;; Copy metadata from plain strings to the highlighted copies
-                               (setq results
-                                     (cl-mapcar (lambda (orig hi)
-                                                  (let ((meta (get-text-property 0 'symbols-server--sym orig)))
-                                                    (put-text-property 0 (length hi) 'symbols-server--sym meta hi)
-                                                    hi))
-                                                plain highlighted)))))
-                       (setq done t)))
-                    ;; Wait synchronously up to 3 seconds for the response
-                    (let ((deadline (+ (float-time) 3.0)))
-                      (while (and (not done) (< (float-time) deadline))
-                        (accept-process-output (symbols-server--state-process state) 0.05)))
-                    (setq last-candidates results)
-                    results))))
+             collection
              :prompt "C++ Symbol: "
              :category 'cpp-symbol
              :state (symbols-server--make-state-fn project-root)
