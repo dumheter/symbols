@@ -268,7 +268,7 @@ using Vec = int;
     ASSERT_EQ(count, static_cast<u64>(1));
 }
 
-DTEST(variablesNotIndexed)
+DTEST(globalVariableIndexed)
 {
     const auto symbols = parseSourceString(R"(
 int globalVar = 42;
@@ -276,8 +276,74 @@ static float kPi = 3.14f;
 const char* kName = "hello";
 )");
 
-    // Plain variable declarations must never appear in the symbol index.
-    ASSERT_EQ(symbols.getSize(), static_cast<usize>(0));
+    bool foundGlobalVar = false;
+    bool foundKPi = false;
+    bool foundKName = false;
+    for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "globalVar" && symbols[i].kind == SymbolKind::Variable)
+            foundGlobalVar = true;
+        if (symbols[i].name == "kPi" && symbols[i].kind == SymbolKind::Variable)
+            foundKPi = true;
+        if (symbols[i].name == "kName" && symbols[i].kind == SymbolKind::Variable)
+            foundKName = true;
+    }
+    ASSERT_TRUE(foundGlobalVar);
+    ASSERT_TRUE(foundKPi);
+    ASSERT_TRUE(foundKName);
+}
+
+DTEST(constexprVariableIndexed)
+{
+    const auto symbols = parseSourceString(R"(
+constexpr int kMaxItems = 64;
+constexpr float kGravity = 9.81f;
+)");
+
+    bool foundMaxItems = false;
+    bool foundGravity = false;
+    for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "kMaxItems" && symbols[i].kind == SymbolKind::Variable)
+            foundMaxItems = true;
+        if (symbols[i].name == "kGravity" && symbols[i].kind == SymbolKind::Variable)
+            foundGravity = true;
+    }
+    ASSERT_TRUE(foundMaxItems);
+    ASSERT_TRUE(foundGravity);
+}
+
+DTEST(macroIndexed)
+{
+    const auto symbols = parseSourceString(R"(
+#define MAX_RETRIES 5
+#define PI 3.14159f
+)");
+
+    bool foundMaxRetries = false;
+    bool foundPi = false;
+    for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "MAX_RETRIES" && symbols[i].kind == SymbolKind::Macro)
+            foundMaxRetries = true;
+        if (symbols[i].name == "PI" && symbols[i].kind == SymbolKind::Macro)
+            foundPi = true;
+    }
+    ASSERT_TRUE(foundMaxRetries);
+    ASSERT_TRUE(foundPi);
+}
+
+DTEST(macroFunctionLikeIndexed)
+{
+    const auto symbols = parseSourceString(R"(
+#define SQUARE(x) ((x) * (x))
+)");
+
+    bool found = false;
+    for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "SQUARE" && symbols[i].kind == SymbolKind::Macro) {
+            found = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(found);
 }
 
 // ---------------------------------------------------------------------------

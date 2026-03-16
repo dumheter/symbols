@@ -17,6 +17,8 @@ enum class SymbolKind : u8 {
     Enum,
     Alias,
     Typedef,
+    Macro,
+    Variable,
 };
 
 /// Convert a SymbolKind to its string representation.

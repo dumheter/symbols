@@ -601,6 +601,14 @@ static auto tokenToKind(dc::StringView token, SymbolKind& out) -> bool
         out = SymbolKind::Typedef;
         return true;
     }
+    if (equalsIgnoreCase(token, dc::StringView("macro"))) {
+        out = SymbolKind::Macro;
+        return true;
+    }
+    if (equalsIgnoreCase(token, dc::StringView("variable"))) {
+        out = SymbolKind::Variable;
+        return true;
+    }
     return false;
 }
 

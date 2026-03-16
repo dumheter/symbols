@@ -27,6 +27,10 @@ namespace symbols {
         return dc::StringView("alias");
     case SymbolKind::Typedef:
         return dc::StringView("typedef");
+    case SymbolKind::Macro:
+        return dc::StringView("macro");
+    case SymbolKind::Variable:
+        return dc::StringView("variable");
     }
     return dc::StringView("unknown");
 }
@@ -45,14 +49,18 @@ namespace symbols {
         return SymbolKind::Alias;
     if (dc::String(str) == "typedef")
         return SymbolKind::Typedef;
+    if (dc::String(str) == "macro")
+        return SymbolKind::Macro;
+    if (dc::String(str) == "variable")
+        return SymbolKind::Variable;
     return SymbolKind::Function;
 }
 
 // Tree-sitter query for extracting C++ symbols.
 // Captures: functions (including methods and function templates),
 // classes/structs (including class/struct templates), enums,
-// type aliases (using =) and typedefs.
-// Variables are intentionally not captured.
+// type aliases (using =), typedefs, #define macros, and variables
+// (global, constexpr, const, and static).
 static constexpr const char* kCppSymbolQuery = R"(
 (function_definition
   declarator: (function_declarator
@@ -102,6 +110,28 @@ static constexpr const char* kCppSymbolQuery = R"(
 
 (type_definition
   declarator: (type_identifier) @typedef)
+
+(preproc_def
+  name: (_) @macro)
+
+(preproc_function_def
+  name: (_) @macro)
+
+(declaration
+  declarator: (init_declarator
+    declarator: (identifier) @variable))
+
+(declaration
+  declarator: (init_declarator
+    declarator: (pointer_declarator
+      declarator: (identifier) @variable)))
+
+(declaration
+  declarator: (identifier) @variable)
+
+(declaration
+  declarator: (pointer_declarator
+    declarator: (identifier) @variable))
 )";
 
 struct Parser::Impl {
@@ -134,6 +164,10 @@ static auto captureNameToKind(const char* name, u32 len) -> SymbolKind
         return SymbolKind::Alias;
     if (svEquals(sv, "typedef"))
         return SymbolKind::Typedef;
+    if (svEquals(sv, "macro"))
+        return SymbolKind::Macro;
+    if (svEquals(sv, "variable"))
+        return SymbolKind::Variable;
     return SymbolKind::Function;
 }
 
