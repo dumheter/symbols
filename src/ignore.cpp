@@ -100,8 +100,10 @@ auto IgnoreList::parse(dc::StringView text) -> IgnoreList
 auto IgnoreList::loadFromDirectory(const std::filesystem::path& projectRoot) -> IgnoreList
 {
     const auto ignoreFile = projectRoot / ".symbols-ignore";
-    if (!std::filesystem::exists(ignoreFile))
+    if (!std::filesystem::exists(ignoreFile)) {
+        LOG_INFO("No .symbols-ignore found; indexing without ignore rules");
         return IgnoreList {};
+    }
 
     dc::File file;
     auto openResult = file.open(dc::String(ignoreFile.string().c_str()), dc::File::Mode::kRead);
@@ -118,7 +120,7 @@ auto IgnoreList::loadFromDirectory(const std::filesystem::path& projectRoot) -> 
 
     const dc::String content = dc::move(readResult).unwrap();
     auto list = IgnoreList::parse(dc::StringView(content));
-    LOG_INFO("Loaded {} ignore rule(s) from .symbols-ignore", list.ruleCount());
+    LOG_INFO("Applying .symbols-ignore with {} rule(s)", list.ruleCount());
     return list;
 }
 

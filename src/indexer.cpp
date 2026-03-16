@@ -19,6 +19,11 @@ namespace symbols {
 static constexpr const char* kCacheDir = ".cache";
 static constexpr const char* kCacheFilename = "symbols-index.json";
 
+static auto cacheFilePath(const std::filesystem::path& projectRoot) -> std::filesystem::path
+{
+    return projectRoot / kCacheDir / kCacheFilename;
+}
+
 /// Read a file's last-write-time as nanoseconds since epoch.
 /// Returns -1 on error.
 static auto getFileMtime(const std::filesystem::path& path) -> s64
@@ -464,7 +469,7 @@ auto Indexer::saveCache(const std::filesystem::path& projectRoot) -> dc::Result<
 
 auto Indexer::loadCache(const std::filesystem::path& projectRoot) -> dc::Result<bool, dc::String>
 {
-    const auto cachePath = projectRoot / kCacheDir / kCacheFilename;
+    const auto cachePath = cacheFilePath(projectRoot);
 
     dc::File file;
     auto openResult = file.open(dc::String(cachePath.string().c_str()), dc::File::Mode::kRead);
@@ -540,9 +545,34 @@ auto Indexer::loadCache(const std::filesystem::path& projectRoot) -> dc::Result<
     return dc::Ok<bool>(true);
 }
 
+auto Indexer::deleteCache(const std::filesystem::path& projectRoot) -> dc::Result<bool, dc::String>
+{
+    const auto cachePath = cacheFilePath(projectRoot);
+    if (!std::filesystem::exists(cachePath))
+        return dc::Ok<bool>(false);
+
+    std::error_code ec;
+    const bool removed = std::filesystem::remove(cachePath, ec);
+    if (ec) {
+        dc::String err("Failed to delete cache file: ");
+        err += cachePath.string().c_str();
+        err += " (";
+        err += ec.message().c_str();
+        err += ")";
+        return dc::Err<dc::String>(dc::move(err));
+    }
+
+    if (removed) {
+        std::error_code removeDirError;
+        [[maybe_unused]] const bool removedDir = std::filesystem::remove(projectRoot / kCacheDir, removeDirError);
+    }
+
+    return dc::Ok<bool>(removed);
+}
+
 auto Indexer::hasCacheFile(const std::filesystem::path& projectRoot) const -> bool
 {
-    const auto cachePath = projectRoot / kCacheDir / kCacheFilename;
+    const auto cachePath = cacheFilePath(projectRoot);
     return std::filesystem::exists(cachePath);
 }
 

@@ -6,8 +6,10 @@
 
 #include <test_helpers.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 using namespace symbols;
@@ -222,6 +224,41 @@ DTEST(handleRequestRebuildPicksUpNewFile)
     ASSERT_TRUE(indexer.symbolCount() > countBefore);
     const auto results = indexer.search(dc::StringView("brandNew"), 10);
     ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(handleRequestForceRebuildReturnsAck)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_force_rebuild_ack";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void oldForce() {}");
+
+    Indexer indexer(sharedJobSystem());
+    indexer.build(tempDir);
+    [[maybe_unused]] auto saveResult = indexer.saveCache(tempDir);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    writeTempFile(tempDir / "a.cpp", "void newForce() {}");
+
+    ServerConfig config;
+    config.projectRoot = tempDir;
+    config.useCache = true;
+
+    const Request req = makeRequest(Method::ForceRebuild, 12);
+    const dc::String response = handleRequest(req, indexer, config);
+
+    auto parseResult = JsonValue::parse(dc::StringView(response));
+    ASSERT_TRUE(parseResult.isOk());
+    const auto val = dc::move(parseResult).unwrap();
+
+    ASSERT_EQ(val.getNumber("id"), static_cast<s64>(12));
+    ASSERT_TRUE(dc::String(val.getString("status")) == "rebuilt");
+    ASSERT_TRUE(val.get("error") == nullptr);
+
+    ASSERT_EQ(indexer.search(dc::StringView("oldForce"), 10).getSize(), static_cast<u64>(0));
+    ASSERT_TRUE(indexer.search(dc::StringView("newForce"), 10).getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(indexer.hasCacheFile(tempDir));
 
     std::filesystem::remove_all(tempDir);
 }

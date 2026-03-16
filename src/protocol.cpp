@@ -32,6 +32,8 @@ auto parseRequest(dc::StringView jsonLine) -> dc::Result<Request, dc::String>
         req.method = Method::Status;
     } else if (dc::String(methodStr) == "rebuild") {
         req.method = Method::Rebuild;
+    } else if (dc::String(methodStr) == "forceRebuild") {
+        req.method = Method::ForceRebuild;
     } else if (dc::String(methodStr) == "rebuildFile") {
         req.method = Method::RebuildFile;
 

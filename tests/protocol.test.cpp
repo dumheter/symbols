@@ -56,6 +56,15 @@ DTEST(parseRequestRebuildMethod)
     ASSERT_EQ(req.method, Method::Rebuild);
 }
 
+DTEST(parseRequestForceRebuildMethod)
+{
+    auto result = parseRequest(dc::StringView(R"({"id":14,"method":"forceRebuild"})"));
+    ASSERT_TRUE(result.isOk());
+    auto req = dc::move(result).unwrap();
+    ASSERT_EQ(req.id, static_cast<s64>(14));
+    ASSERT_EQ(req.method, Method::ForceRebuild);
+}
+
 DTEST(parseRequestRebuildFileMethod)
 {
     auto result

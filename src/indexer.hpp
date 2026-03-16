@@ -69,6 +69,11 @@ public:
     /// Load the index from a cache file.
     /// Returns Ok(true) on success.
     [[nodiscard]] auto loadCache(const std::filesystem::path& projectRoot) -> dc::Result<bool, dc::String>;
+
+    /// Delete the cache file for this project.
+    /// Returns Ok(true) when a cache file was removed and Ok(false) when none existed.
+    [[nodiscard]] auto deleteCache(const std::filesystem::path& projectRoot) -> dc::Result<bool, dc::String>;
+
     /// Check if a cache file exists and is valid.
     [[nodiscard]] auto hasCacheFile(const std::filesystem::path& projectRoot) const -> bool;
 

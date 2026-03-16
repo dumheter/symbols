@@ -452,6 +452,27 @@ DTEST(hasCacheFileReturnsTrueAfterSave)
     std::filesystem::remove_all(tempDir);
 }
 
+DTEST(deleteCacheRemovesExistingCacheFile)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_cache_delete_present";
+    std::filesystem::create_directories(tempDir);
+
+    writeTempFile(tempDir / "a.cpp", "void foo() {}");
+
+    Indexer indexer(sharedJobSystem());
+    indexer.build(tempDir);
+    [[maybe_unused]] auto saveResult = indexer.saveCache(tempDir);
+
+    ASSERT_TRUE(indexer.hasCacheFile(tempDir));
+
+    auto deleteResult = indexer.deleteCache(tempDir);
+    ASSERT_TRUE(deleteResult.isOk());
+    ASSERT_TRUE(dc::move(deleteResult).unwrap());
+    ASSERT_FALSE(indexer.hasCacheFile(tempDir));
+
+    std::filesystem::remove_all(tempDir);
+}
+
 DTEST(fileCountAfterBuild)
 {
     const auto tempDir = std::filesystem::temp_directory_path() / "symbols_file_count";

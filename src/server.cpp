@@ -60,6 +60,27 @@ auto handleRequest(const Request& req, Indexer& indexer, const ServerConfig& con
         return buildAckResponse(req.id, "rebuilt");
     }
 
+    case Method::ForceRebuild: {
+        LOG_INFO("Force rebuilding index from scratch...");
+        auto deleteResult = indexer.deleteCache(config.projectRoot);
+        if (deleteResult.isOk()) {
+            if (dc::move(deleteResult).unwrap())
+                LOG_INFO("Deleted existing cache before force rebuild");
+            else
+                LOG_INFO("No existing cache to delete before force rebuild");
+        } else {
+            LOG_WARNING("Failed to delete cache before force rebuild: {}", dc::move(deleteResult).unwrapErr().c_str());
+        }
+
+        indexer.build(config.projectRoot, config.searchDirs, config.diagnostics);
+        if (config.useCache) {
+            auto r = indexer.saveCache(config.projectRoot);
+            if (!r.isOk())
+                LOG_WARNING("Failed to save cache after force rebuild");
+        }
+        return buildAckResponse(req.id, "rebuilt");
+    }
+
     case Method::RebuildFile: {
         if (req.file.getSize() == 0)
             return buildErrorResponse(req.id, "rebuildFile requires a non-empty file path");

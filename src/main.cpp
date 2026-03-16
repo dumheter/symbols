@@ -26,7 +26,8 @@ static auto printUsage(const char* programName) -> void
         "  {{\"id\":1,\"method\":\"query\",\"params\":{{\"pattern\":\"Foo\",\"limit\":200}}}}\n"
         "  {{\"id\":2,\"method\":\"status\"}}\n"
         "  {{\"id\":3,\"method\":\"rebuild\"}}\n"
-        "  {{\"id\":4,\"method\":\"shutdown\"}}",
+        "  {{\"id\":4,\"method\":\"forceRebuild\"}}\n"
+        "  {{\"id\":5,\"method\":\"shutdown\"}}",
         programName);
 }
 

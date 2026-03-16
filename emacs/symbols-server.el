@@ -17,7 +17,9 @@
 ;;
 ;; Usage:
 ;;   M-s M-s  -> symbols-server-find-symbols
-;;   C-u M-s M-s -> force index rebuild before searching
+;;   C-u M-s M-s -> incremental reindex before searching
+;;   M-x symbols-server-reindex -> incremental reindex for current project
+;;   M-x symbols-server-force-reindex -> delete cache and rebuild current project
 ;;   M-.      -> xref definitions  (via xref backend)
 ;;   M-,      -> xref-go-back  (standard xref; returns from M-. jump)
 
@@ -146,10 +148,9 @@ Set to nil to disable automatic single-file rebuilds on save."
           (error nil)))
       (remhash root symbols-server--servers))))
 
-(defun symbols-server--get-or-start (project-root &optional search-dir force-rebuild)
+(defun symbols-server--get-or-start (project-root &optional search-dir)
   "Return a live server state for PROJECT-ROOT, starting one if necessary.
-SEARCH-DIR, if non-nil, is passed as --search-dir.
-If FORCE-REBUILD is non-nil, sends a rebuild request once ready."
+SEARCH-DIR, if non-nil, is passed as --search-dir."
   (let ((state (gethash project-root symbols-server--servers)))
     (if (and state (process-live-p (symbols-server--state-process state)))
         state
@@ -175,15 +176,11 @@ If FORCE-REBUILD is non-nil, sends a rebuild request once ready."
                          :project-root project-root
                          :ready       nil
                          :pending     nil
-                         :next-id     1
-                         :partial     "")))
+                          :next-id     1
+                          :partial     "")))
         (process-put proc 'project-root project-root)
         (set-process-query-on-exit-flag proc nil)
         (puthash project-root new-state symbols-server--servers)
-        (when force-rebuild
-          ;; Queue a rebuild once the process is live (it rebuilds on first run anyway,
-          ;; but if we want explicit rebuild after-ready we register a callback on id:0)
-          (symbols-server--send-rebuild new-state))
         new-state))))
 
 (defun symbols-server--wait-ready (state timeout-secs)
@@ -223,26 +220,88 @@ Returns non-nil if the server became ready."
                 (symbols-server--state-pending state)))
     (symbols-server--send state msg)))
 
-(defun symbols-server--send-rebuild (state)
-  "Send a full incremental rebuild request to STATE."
+(defun symbols-server--send-command (state method &optional params callback)
+  "Send METHOD with PARAMS to STATE.
+If CALLBACK is non-nil, register it for the response."
   (let* ((id  (symbols-server--next-id state))
-         (msg (json-serialize `((id . ,id) (method . "rebuild")))))
+         (payload `((id . ,id) (method . ,method)))
+         (payload (if params
+                      (append payload `((params . ,params)))
+                    payload))
+         (msg (json-serialize payload)))
+    (when callback
+      (setf (symbols-server--state-pending state)
+            (cons (cons id callback)
+                  (symbols-server--state-pending state))))
     (symbols-server--send state msg)))
+
+(defun symbols-server--call-command (state method &optional params timeout-secs)
+  "Send METHOD with PARAMS to STATE and wait for the response.
+Signals a `user-error' if the request times out."
+  (let ((response nil)
+        (done nil)
+        (timeout (or timeout-secs 30.0)))
+    (symbols-server--send-command
+     state method params
+     (lambda (obj)
+       (setq response obj
+             done t)))
+    (let ((deadline (+ (float-time) timeout)))
+      (while (and (not done)
+                  (< (float-time) deadline)
+                  (process-live-p (symbols-server--state-process state)))
+        (accept-process-output (symbols-server--state-process state) 0.05)))
+    (unless done
+      (user-error "symbols-server: %s request timed out" method))
+    response))
+
+(defun symbols-server--send-rebuild (state &optional callback)
+  "Send an incremental rebuild request to STATE."
+  (symbols-server--send-command state "rebuild" nil callback))
+
+(defun symbols-server--send-force-rebuild (state &optional callback)
+  "Send a force rebuild request to STATE."
+  (symbols-server--send-command state "forceRebuild" nil callback))
 
 (defun symbols-server--send-rebuild-file (state file)
   "Send a single-file rebuild request for FILE to STATE.
 FILE must be an absolute path string."
-  (let* ((id  (symbols-server--next-id state))
-         (msg (json-serialize `((id . ,id)
-                                (method . "rebuildFile")
-                                (params . ((file . ,file)))))))
-    (symbols-server--send state msg)))
+  (symbols-server--send-command state "rebuildFile" `((file . ,file))))
 
 (defun symbols-server--send-shutdown (state)
   "Send a shutdown request to STATE."
-  (let* ((id  (symbols-server--next-id state))
-         (msg (json-serialize `((id . ,id) (method . "shutdown")))))
-    (symbols-server--send state msg)))
+  (symbols-server--send-command state "shutdown"))
+
+(defun symbols-server--current-project-root ()
+  "Return the current projectile root or signal a `user-error'."
+  (or (projectile-project-root)
+      (user-error "Not in a projectile project")))
+
+(defun symbols-server--ready-state-for-project (project-root)
+  "Return a ready server state for PROJECT-ROOT."
+  (let* ((search-dir (symbols-server--search-dir project-root))
+         (state (symbols-server--get-or-start project-root search-dir)))
+    (unless (symbols-server--wait-ready state symbols-server-ready-timeout)
+      (user-error "symbols-server: timed out waiting for server to become ready"))
+    state))
+
+(defun symbols-server--request-reindex (state mode)
+  "Request a reindex on STATE.
+MODE must be either the symbol `incremental' or `force'."
+  (let* ((force-p (eq mode 'force))
+         (label (if force-p "force" "incremental"))
+         (response (progn
+                     (message "symbols-server: requesting %s reindex..." label)
+                     (symbols-server--call-command
+                      state
+                      (if force-p "forceRebuild" "rebuild")
+                      nil
+                      symbols-server-ready-timeout))))
+    (let ((error-text (alist-get 'error response)))
+      (when error-text
+        (user-error "symbols-server: %s" error-text)))
+    (message "symbols-server: %s reindex complete" label)
+    response))
 
 ;; ---------------------------------------------------------------------------
 ;; Symbol display helpers
@@ -549,19 +608,12 @@ The absolute path of the saved file is sent so only that one file is re-parsed."
 ;;;###autoload
 (defun symbols-server-find-symbols (&optional force-rebuild)
   "Browse C++ symbols in the current project using the symbols server.
-With prefix argument FORCE-REBUILD, trigger an index rebuild first."
+With prefix argument FORCE-REBUILD, trigger an incremental reindex first."
   (interactive "P")
-  (let* ((project-root (or (projectile-project-root)
-                           (user-error "Not in a projectile project")))
-         (search-dir   (symbols-server--search-dir project-root))
-         (state        (symbols-server--get-or-start project-root search-dir))
-         (_            (unless (symbols-server--wait-ready state symbols-server-ready-timeout)
-                         (user-error "symbols-server: timed out waiting for server to become ready")))
+  (let* ((project-root (symbols-server--current-project-root))
+         (state        (symbols-server--ready-state-for-project project-root))
          (_            (when force-rebuild
-                         (message "symbols-server: requesting index rebuild...")
-                         (symbols-server--send-rebuild state)
-                         ;; Give it a moment so the rebuild ack comes back before we query
-                         (sit-for 0.5))))
+                         (symbols-server--request-reindex state 'incremental))))
     (let* ((last-candidates nil)
            (collection
             (consult--dynamic-collection
@@ -616,6 +668,22 @@ With prefix argument FORCE-REBUILD, trigger an index rebuild first."
       (when selected
         (let ((sym (get-text-property 0 'symbols-server--sym selected)))
           (symbols-server--goto-sym sym project-root))))))
+
+;;;###autoload
+(defun symbols-server-reindex ()
+  "Incrementally reindex the current project."
+  (interactive)
+  (symbols-server--request-reindex
+   (symbols-server--ready-state-for-project (symbols-server--current-project-root))
+   'incremental))
+
+;;;###autoload
+(defun symbols-server-force-reindex ()
+  "Delete the current cache and rebuild the project index from scratch."
+  (interactive)
+  (symbols-server--request-reindex
+   (symbols-server--ready-state-for-project (symbols-server--current-project-root))
+   'force))
 
 ;;;###autoload
 (defun symbols-server-shutdown (&optional project-root)

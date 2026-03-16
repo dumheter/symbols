@@ -227,7 +227,7 @@ name; the server does the fuzzy filtering and returns the top 200 matches.
 Hovering over a candidate previews the file; `RET` jumps there (pushing an
 xref marker so `M-,` returns you).
 
-`C-u M-s M-s` forces an index rebuild before searching.
+`C-u M-s M-s` triggers a manual incremental reindex before searching.
 
 ### xref integration (`M-.` / `M-,`)
 
@@ -265,6 +265,8 @@ has not yet been started.
 
 | Command | Description |
 |---|---|
+| `symbols-server-reindex` | Incrementally reindex the current project |
+| `symbols-server-force-reindex` | Delete the current cache and rebuild the project index from scratch |
 | `symbols-server-shutdown` | Gracefully stop the server for the current project |
 | `symbols-server-restart` | Kill and restart the server |
 
