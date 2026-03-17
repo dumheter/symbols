@@ -55,20 +55,20 @@ auto handleRequest(const Request& req, Indexer& indexer, const ServerConfig& con
         return buildAckResponse(req.id, "rebuilt");
     }
 
-    case Method::ForceRebuild: {
-        LOG_INFO("Force rebuilding index from scratch...");
+    case Method::InvalidateCache: {
+        LOG_INFO("Invalidating cache file...");
         auto deleteResult = indexer.deleteCache(config.projectRoot);
         if (deleteResult.isOk()) {
             if (dc::move(deleteResult).unwrap())
-                LOG_INFO("Deleted existing cache before force rebuild");
+                LOG_INFO("Deleted existing cache file");
             else
-                LOG_INFO("No existing cache to delete before force rebuild");
+                LOG_INFO("No existing cache file to delete");
         } else {
-            LOG_WARNING("Failed to delete cache before force rebuild: {}", dc::move(deleteResult).unwrapErr().c_str());
+            LOG_WARNING("Failed to invalidate cache file: {}", dc::move(deleteResult).unwrapErr().c_str());
+            return buildErrorResponse(req.id, "Failed to invalidate cache");
         }
 
-        indexer.build(config.projectRoot, config.searchDirs, config.diagnostics);
-        return buildAckResponse(req.id, "rebuilt");
+        return buildAckResponse(req.id, "cacheInvalidated");
     }
 
     case Method::RebuildFile: {

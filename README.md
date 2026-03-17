@@ -266,7 +266,7 @@ has not yet been started.
 | Command | Description |
 |---|---|
 | `symbols-server-reindex` | Incrementally reindex the current project |
-| `symbols-server-force-reindex` | Delete the current cache and rebuild the project index from scratch |
+| `symbols-server-invalidate-cache` | Delete the current project cache file so the next startup rebuilds it |
 | `symbols-server-shutdown` | Gracefully stop the server for the current project |
 | `symbols-server-restart` | Kill and restart the server |
 

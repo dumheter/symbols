@@ -13,7 +13,7 @@ enum class Method : u8 {
     Query,
     Status,
     Rebuild,
-    ForceRebuild,
+    InvalidateCache,
     RebuildFile,
     Shutdown,
     Unknown,

@@ -56,13 +56,13 @@ DTEST(parseRequestRebuildMethod)
     ASSERT_EQ(req.method, Method::Rebuild);
 }
 
-DTEST(parseRequestForceRebuildMethod)
+DTEST(parseRequestInvalidateCacheMethod)
 {
-    auto result = parseRequest(dc::StringView(R"({"id":14,"method":"forceRebuild"})"));
+    auto result = parseRequest(dc::StringView(R"({"id":14,"method":"invalidateCache"})"));
     ASSERT_TRUE(result.isOk());
     auto req = dc::move(result).unwrap();
     ASSERT_EQ(req.id, static_cast<s64>(14));
-    ASSERT_EQ(req.method, Method::ForceRebuild);
+    ASSERT_EQ(req.method, Method::InvalidateCache);
 }
 
 DTEST(parseRequestRebuildFileMethod)

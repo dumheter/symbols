@@ -19,7 +19,7 @@
 ;;   M-s M-s  -> symbols-server-find-symbols
 ;;   C-u M-s M-s -> incremental reindex before searching
 ;;   M-x symbols-server-reindex -> incremental reindex for current project
-;;   M-x symbols-server-force-reindex -> delete cache and rebuild current project
+;;   M-x symbols-server-invalidate-cache -> delete the project cache file
 ;;   M-.      -> xref definitions  (via xref backend)
 ;;   M-,      -> xref-go-back  (standard xref; returns from M-. jump)
 
@@ -266,9 +266,9 @@ Signals a `user-error' if the request times out."
   "Send an incremental rebuild request to STATE."
   (symbols-server--send-command state "rebuild" nil callback))
 
-(defun symbols-server--send-force-rebuild (state &optional callback)
-  "Send a force rebuild request to STATE."
-  (symbols-server--send-command state "forceRebuild" nil callback))
+(defun symbols-server--send-invalidate-cache (state &optional callback)
+  "Send a cache invalidation request to STATE."
+  (symbols-server--send-command state "invalidateCache" nil callback))
 
 (defun symbols-server--send-rebuild-file (state file)
   "Send a single-file rebuild request for FILE to STATE.
@@ -292,22 +292,26 @@ FILE must be an absolute path string."
       (user-error "symbols-server: timed out waiting for server to become ready"))
     state))
 
-(defun symbols-server--request-reindex (state mode)
-  "Request a reindex on STATE.
-MODE must be either the symbol `incremental' or `force'."
-  (let* ((force-p (eq mode 'force))
-         (label (if force-p "force" "incremental"))
-         (response (progn
-                     (message "symbols-server: requesting %s reindex..." label)
-                     (symbols-server--call-command
-                      state
-                      (if force-p "forceRebuild" "rebuild")
-                      nil
-                      symbols-server-ready-timeout))))
+(defun symbols-server--request-reindex (state)
+  "Request an incremental reindex on STATE."
+  (let ((response (progn
+                    (message "symbols-server: requesting incremental reindex...")
+                    (symbols-server--call-command state "rebuild" nil symbols-server-ready-timeout))))
     (let ((error-text (alist-get 'error response)))
       (when error-text
         (user-error "symbols-server: %s" error-text)))
-    (message "symbols-server: %s reindex complete" label)
+    (message "symbols-server: incremental reindex complete")
+    response))
+
+(defun symbols-server--request-cache-invalidation (state)
+  "Request cache invalidation on STATE."
+  (let ((response (progn
+                    (message "symbols-server: invalidating cache file...")
+                    (symbols-server--call-command state "invalidateCache" nil symbols-server-ready-timeout))))
+    (let ((error-text (alist-get 'error response)))
+      (when error-text
+        (user-error "symbols-server: %s" error-text)))
+    (message "symbols-server: cache file invalidated")
     response))
 
 ;; ---------------------------------------------------------------------------
@@ -620,7 +624,7 @@ With prefix argument FORCE-REBUILD, trigger an incremental reindex first."
   (let* ((project-root (symbols-server--current-project-root))
          (state        (symbols-server--ready-state-for-project project-root))
          (_            (when force-rebuild
-                         (symbols-server--request-reindex state 'incremental))))
+                         (symbols-server--request-reindex state))))
     (let* ((last-candidates nil)
            (collection
             (consult--dynamic-collection
@@ -681,16 +685,14 @@ With prefix argument FORCE-REBUILD, trigger an incremental reindex first."
   "Incrementally reindex the current project."
   (interactive)
   (symbols-server--request-reindex
-   (symbols-server--ready-state-for-project (symbols-server--current-project-root))
-   'incremental))
+   (symbols-server--ready-state-for-project (symbols-server--current-project-root))))
 
 ;;;###autoload
-(defun symbols-server-force-reindex ()
-  "Delete the current cache and rebuild the project index from scratch."
+(defun symbols-server-invalidate-cache ()
+  "Delete the current project cache file."
   (interactive)
-  (symbols-server--request-reindex
-   (symbols-server--ready-state-for-project (symbols-server--current-project-root))
-   'force))
+  (symbols-server--request-cache-invalidation
+   (symbols-server--ready-state-for-project (symbols-server--current-project-root))))
 
 ;;;###autoload
 (defun symbols-server-shutdown (&optional project-root)
