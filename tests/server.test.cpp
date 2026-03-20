@@ -258,7 +258,8 @@ DTEST(handleRequestForceRebuildReturnsAck)
 
     ASSERT_EQ(indexer.search(dc::StringView("oldForce"), 10).getSize(), static_cast<u64>(0));
     ASSERT_TRUE(indexer.search(dc::StringView("newForce"), 10).getSize() >= static_cast<u64>(1));
-    ASSERT_TRUE(indexer.hasCacheFile(tempDir));
+    // Cache save now happens in runServerLoop after the response is sent, not inside handleRequest.
+    ASSERT_TRUE(indexer.isDirty());
 
     std::filesystem::remove_all(tempDir);
 }
@@ -436,9 +437,10 @@ DTEST(initializeIndexFirstRunCreatesCacheFile)
     std::filesystem::remove_all(tempDir);
 }
 
-DTEST(handleRequestRebuildSavesCacheWhenEnabled)
+DTEST(runServerLoopSavesCacheAfterRebuild)
 {
-    // When useCache=true, handleRequest(Rebuild) must save the cache file.
+    // When useCache=true, runServerLoop must save the cache file *after* sending
+    // the rebuilt response (non-blocking: Emacs gets the ack before the disk write).
     const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_rebuild_cache";
     std::filesystem::create_directories(tempDir);
     writeTempFile(tempDir / "a.cpp", "void cacheMe() {}");
@@ -453,10 +455,11 @@ DTEST(handleRequestRebuildSavesCacheWhenEnabled)
     // No cache yet before the rebuild.
     ASSERT_FALSE(indexer.hasCacheFile(tempDir));
 
-    const Request req = makeRequest(Method::Rebuild, 42);
-    [[maybe_unused]] const dc::String response = handleRequest(req, indexer, config);
+    std::istringstream in("{\"id\":1,\"method\":\"rebuild\"}\n{\"id\":2,\"method\":\"shutdown\"}\n");
+    std::ostringstream out;
+    [[maybe_unused]] const s32 ret = runServerLoop(in, out, indexer, config);
 
-    // Cache must now exist.
+    // Cache must now exist — saved by the loop after sending the rebuilt response.
     ASSERT_TRUE(indexer.hasCacheFile(tempDir));
 
     std::filesystem::remove_all(tempDir);

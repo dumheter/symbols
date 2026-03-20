@@ -77,6 +77,16 @@ public:
     /// Check if a cache file exists and is valid.
     [[nodiscard]] auto hasCacheFile(const std::filesystem::path& projectRoot) const -> bool;
 
+    /// Prune symbols for files that have been deleted from disk since the last build.
+    /// Faster than `incrementalBuild` — only checks existence of tracked files,
+    /// does not scan the project directory for new or changed files.
+    /// Returns the number of files evicted.
+    auto pruneDeletedFiles(const std::filesystem::path& projectRoot) -> u64;
+
+    /// Returns true if the index has unsaved changes (i.e. a build or prune occurred
+    /// since the last successful `saveCache`).
+    [[nodiscard]] auto isDirty() const -> bool;
+
     /// Search for symbols matching a pattern.
     /// Returns up to `limit` results sorted by relevance score.
     [[nodiscard]] auto search(dc::StringView pattern, u32 limit) const -> dc::List<SearchResult>;
@@ -101,6 +111,7 @@ private:
     dc::Map<dc::String, FileRecord> m_fileRecords;
     usize m_fileCount;
     bool m_ready;
+    bool m_dirty; ///< True if the index has unsaved changes since the last saveCache.
 };
 
 } // namespace symbols

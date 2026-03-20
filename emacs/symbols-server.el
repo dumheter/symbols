@@ -185,11 +185,18 @@ SEARCH-DIR, if non-nil, is passed as --search-dir."
 
 (defun symbols-server--wait-ready (state timeout-secs)
   "Block (with `accept-process-output') until STATE is ready or TIMEOUT-SECS elapsed.
+Shows a progress message in the echo area after 1 second so the user knows
+the server is still starting up (e.g. during the initial index build).
 Returns non-nil if the server became ready."
-  (let ((deadline (+ (float-time) timeout-secs)))
+  (let ((deadline  (+ (float-time) timeout-secs))
+        (start     (float-time))
+        (next-msg  (+ (float-time) 1.0)))
     (while (and (not (symbols-server--state-ready state))
                 (< (float-time) deadline)
                 (process-live-p (symbols-server--state-process state)))
+      (when (>= (float-time) next-msg)
+        (message "symbols-server: building index... (%.0fs)" (- (float-time) start))
+        (setq next-msg (+ (float-time) 1.0)))
       (accept-process-output (symbols-server--state-process state) 0.1)))
   (symbols-server--state-ready state))
 

@@ -39,6 +39,7 @@ Indexer::Indexer(dc::JobSystem& jobSystem)
     : m_jobSystem(&jobSystem)
     , m_fileCount(0)
     , m_ready(false)
+    , m_dirty(false)
 {
 }
 
@@ -50,10 +51,12 @@ Indexer::Indexer(Indexer&& other) noexcept
     , m_fileRecords(dc::move(other.m_fileRecords))
     , m_fileCount(other.m_fileCount)
     , m_ready(other.m_ready)
+    , m_dirty(other.m_dirty)
 {
     other.m_jobSystem = nullptr;
     other.m_fileCount = 0;
     other.m_ready = false;
+    other.m_dirty = false;
 }
 
 auto Indexer::operator=(Indexer&& other) noexcept -> Indexer&
@@ -64,9 +67,11 @@ auto Indexer::operator=(Indexer&& other) noexcept -> Indexer&
         m_fileRecords = dc::move(other.m_fileRecords);
         m_fileCount = other.m_fileCount;
         m_ready = other.m_ready;
+        m_dirty = other.m_dirty;
         other.m_jobSystem = nullptr;
         other.m_fileCount = 0;
         other.m_ready = false;
+        other.m_dirty = false;
     }
     return *this;
 }
@@ -173,6 +178,7 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
 
     timer.stop();
     m_ready = true;
+    m_dirty = true;
 
     LOG_INFO("Indexed {} symbols from {} files in {:.2f}s ({} errors)", m_symbols.getSize(), allFiles.getSize(),
         timer.fs(), errorCount);
@@ -208,12 +214,13 @@ auto Indexer::incrementalBuild(
     }
 
     // Build a map of all current files: relative path -> absolute path.
+    // Use generic_string() (forward slashes) to match the keys stored in m_fileRecords.
     dc::Map<dc::String, bool> currentFileSet;
     for (u64 i = 0; i < allFiles.getSize(); ++i) {
         std::error_code ec;
         const auto rel = std::filesystem::relative(allFiles[i], projectRoot, ec);
         if (!ec) {
-            auto* slot = currentFileSet.insert(dc::String(rel.string().c_str()));
+            auto* slot = currentFileSet.insert(dc::String(rel.generic_string().c_str()));
             if (slot)
                 *slot = true;
         }
@@ -240,7 +247,7 @@ auto Indexer::incrementalBuild(
         const auto rel = std::filesystem::relative(allFiles[i], projectRoot, ec);
         if (ec)
             continue;
-        const dc::String key(rel.string().c_str());
+        const dc::String key(rel.generic_string().c_str());
         const s64 diskMtime = getFileMtime(allFiles[i]);
         const auto* rec = m_fileRecords.tryGet(key);
         if (!rec || rec->value.mtime != diskMtime) {
@@ -336,6 +343,7 @@ auto Indexer::incrementalBuild(
 
     m_fileCount = allFiles.getSize();
     m_ready = true;
+    m_dirty = true;
     timer.stop();
 
     LOG_INFO("Incremental rebuild done: {} symbols total in {:.2f}s ({} errors)", m_symbols.getSize(), timer.fs(),
@@ -402,6 +410,45 @@ auto Indexer::rebuildFile(const std::filesystem::path& absolutePath, const std::
     LOG_INFO("rebuildFile: updated {} ({} symbols total)", relKey.c_str(), m_symbols.getSize());
 }
 
+auto Indexer::pruneDeletedFiles(const std::filesystem::path& projectRoot) -> u64
+{
+    dc::Map<dc::String, bool> evictSet;
+    m_fileRecords.removeIf([&](const dc::Map<dc::String, FileRecord>::Entry& entry) -> bool {
+        // entry.key is a generic (forward-slash) relative path; construct the absolute path.
+        const std::filesystem::path absPath = projectRoot / std::filesystem::path(entry.key.c_str());
+        if (!std::filesystem::exists(absPath)) {
+            auto* slot = evictSet.insert(entry.key);
+            if (slot)
+                *slot = true;
+            return true; // remove from m_fileRecords
+        }
+        return false;
+    });
+
+    if (evictSet.getSize() == 0)
+        return 0;
+
+    u64 writeIdx = 0;
+    for (u64 i = 0; i < m_symbols.getSize(); ++i) {
+        if (!evictSet.tryGet(m_symbols[i].file)) {
+            if (writeIdx != i)
+                m_symbols[writeIdx] = dc::move(m_symbols[i]);
+            ++writeIdx;
+        }
+    }
+    m_symbols.resize(writeIdx);
+    m_fileCount = m_fileRecords.getSize();
+    m_dirty = true;
+
+    LOG_INFO("Pruned {} deleted files from index ({} symbols remaining)", evictSet.getSize(), m_symbols.getSize());
+    return evictSet.getSize();
+}
+
+auto Indexer::isDirty() const -> bool
+{
+    return m_dirty;
+}
+
 auto Indexer::saveCache(const std::filesystem::path& projectRoot) -> dc::Result<bool, dc::String>
 {
     const auto cacheDir = projectRoot / kCacheDir;
@@ -463,6 +510,7 @@ auto Indexer::saveCache(const std::filesystem::path& projectRoot) -> dc::Result<
     }
     [[maybe_unused]] auto writeResult = file.write(json);
 
+    m_dirty = false;
     LOG_INFO("Saved {} symbols to cache: {}", m_symbols.getSize(), cachePath.string().c_str());
     return dc::Ok<bool>(true);
 }

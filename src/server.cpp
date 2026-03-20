@@ -52,11 +52,6 @@ auto handleRequest(const Request& req, Indexer& indexer, const ServerConfig& con
     case Method::Rebuild: {
         LOG_INFO("Rebuilding index (incremental)...");
         indexer.incrementalBuild(config.projectRoot, config.searchDirs, config.diagnostics);
-        if (config.useCache) {
-            auto r = indexer.saveCache(config.projectRoot);
-            if (!r.isOk())
-                LOG_WARNING("Failed to save cache after rebuild");
-        }
         return buildAckResponse(req.id, "rebuilt");
     }
 
@@ -73,11 +68,6 @@ auto handleRequest(const Request& req, Indexer& indexer, const ServerConfig& con
         }
 
         indexer.build(config.projectRoot, config.searchDirs, config.diagnostics);
-        if (config.useCache) {
-            auto r = indexer.saveCache(config.projectRoot);
-            if (!r.isOk())
-                LOG_WARNING("Failed to save cache after force rebuild");
-        }
         return buildAckResponse(req.id, "rebuilt");
     }
 
@@ -106,6 +96,14 @@ auto initializeIndex(Indexer& indexer, const ServerConfig& config) -> void
         auto loadResult = indexer.loadCache(config.projectRoot);
         if (loadResult.isOk()) {
             LOG_INFO("Cache loaded successfully");
+            // Prune symbols for any files deleted since the cache was written.
+            // This is a fast existence-check pass over tracked files only.
+            const u64 pruned = indexer.pruneDeletedFiles(config.projectRoot);
+            if (pruned > 0 && config.useCache) {
+                auto r = indexer.saveCache(config.projectRoot);
+                if (!r.isOk())
+                    LOG_WARNING("Failed to save cache after pruning deleted files");
+            }
         } else {
             LOG_WARNING("Cache load failed, building fresh index");
             indexer.build(config.projectRoot, config.searchDirs, config.diagnostics);
@@ -153,6 +151,13 @@ auto runServerLoop(std::istream& in, std::ostream& out, Indexer& indexer, const 
         }
 
         sendResponse(out, handleRequest(req, indexer, config));
+
+        // Save cache after sending the response so Emacs is not blocked by the disk write.
+        if (config.useCache && indexer.isDirty()) {
+            auto r = indexer.saveCache(config.projectRoot);
+            if (!r.isOk())
+                LOG_WARNING("Failed to save cache");
+        }
     }
 
     LOG_INFO("Symbol server exiting");

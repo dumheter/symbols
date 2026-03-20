@@ -595,6 +595,66 @@ DTEST(incrementalBuildNoOpWhenUnchanged)
     std::filesystem::remove_all(tempDir);
 }
 
+DTEST(pruneDeletedFilesAfterCacheLoad)
+{
+    // Regression: symbols for files deleted between runs must be pruned when the
+    // cache is loaded, not left in the index until the next explicit rebuild.
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_prune_deleted_cache";
+    std::filesystem::create_directories(tempDir);
+
+    const auto fileA = tempDir / "a.cpp";
+    const auto fileB = tempDir / "b.cpp";
+    writeTempFile(fileA, "void alpha() {}");
+    writeTempFile(fileB, "void beta() {}");
+
+    // Build and persist cache with both files present.
+    {
+        Indexer indexer(sharedJobSystem());
+        indexer.build(tempDir);
+        ASSERT_TRUE(indexer.symbolCount() >= static_cast<usize>(2));
+        [[maybe_unused]] auto sr = indexer.saveCache(tempDir);
+    }
+
+    // Delete one file while the server is "offline".
+    std::filesystem::remove(fileB);
+
+    // Load cache (stale — still records beta).
+    Indexer indexer(sharedJobSystem());
+    const auto loadResult = indexer.loadCache(tempDir);
+    ASSERT_TRUE(loadResult.isOk());
+
+    // Pruning must evict the deleted file.
+    const u64 pruned = indexer.pruneDeletedFiles(tempDir);
+    ASSERT_TRUE(pruned >= static_cast<u64>(1));
+    ASSERT_TRUE(indexer.isDirty());
+
+    // alpha survives; beta is gone.
+    const auto alphaResults = indexer.search(dc::StringView("alpha"), 10);
+    const auto betaResults = indexer.search(dc::StringView("beta"), 10);
+    ASSERT_TRUE(alphaResults.getSize() >= static_cast<u64>(1));
+    ASSERT_EQ(betaResults.getSize(), static_cast<u64>(0));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+DTEST(isDirtyAfterBuildClearedBySave)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_dirty_flag";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "a.cpp", "void foo() {}");
+
+    Indexer indexer(sharedJobSystem());
+    ASSERT_FALSE(indexer.isDirty());
+
+    indexer.build(tempDir);
+    ASSERT_TRUE(indexer.isDirty());
+
+    [[maybe_unused]] auto sr = indexer.saveCache(tempDir);
+    ASSERT_FALSE(indexer.isDirty());
+
+    std::filesystem::remove_all(tempDir);
+}
+
 DTEST(incrementalBuildSurvivesCacheRoundTrip)
 {
     const auto tempDir = std::filesystem::temp_directory_path() / "symbols_test_incr_cache";
