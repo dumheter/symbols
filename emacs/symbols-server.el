@@ -69,6 +69,11 @@ Set to nil to disable automatic single-file rebuilds on save."
   :type 'boolean
   :group 'symbols-server)
 
+(defcustom symbols-server-enable-diagnostics t
+  "If non-nil, ask the server to log startup diagnostics such as slowest parsed files."
+  :type 'boolean
+  :group 'symbols-server)
+
 ;; ---------------------------------------------------------------------------
 ;; Per-project server state
 
@@ -156,7 +161,9 @@ SEARCH-DIR, if non-nil, is passed as --search-dir."
         state
       ;; Start a new server process
       (let* ((exe    symbols-server-executable)
-             (args   (list "--root" (expand-file-name project-root)))
+             (args   (append (list "--root" (expand-file-name project-root))
+                             (when symbols-server-enable-diagnostics
+                               (list "--diagnostics"))))
              (args   (if search-dir
                          (append args (list "--search-dir" (expand-file-name search-dir)))
                        args))
@@ -284,6 +291,10 @@ FILE must be an absolute path string."
   (or (projectile-project-root)
       (user-error "Not in a projectile project")))
 
+(defun symbols-server--cache-file (project-root)
+  "Return the cache file path for PROJECT-ROOT."
+  (expand-file-name ".cache/symbols-index.json" project-root))
+
 (defun symbols-server--ready-state-for-project (project-root)
   "Return a ready server state for PROJECT-ROOT."
   (let* ((search-dir (symbols-server--search-dir project-root))
@@ -309,9 +320,20 @@ FILE must be an absolute path string."
                     (message "symbols-server: invalidating cache file...")
                     (symbols-server--call-command state "invalidateCache" nil symbols-server-ready-timeout))))
     (let ((error-text (alist-get 'error response)))
-      (when error-text
-        (user-error "symbols-server: %s" error-text)))
-    (message "symbols-server: cache file invalidated")
+      (cond
+       ((and (stringp error-text)
+             (string= error-text "Unknown method"))
+        (let ((cache-file (symbols-server--cache-file
+                           (symbols-server--state-project-root state))))
+          (if (file-exists-p cache-file)
+              (progn
+                (delete-file cache-file)
+                (message "symbols-server: cache file invalidated locally (server binary is older)"))
+            (message "symbols-server: cache file already missing (server binary is older)"))))
+       (error-text
+        (user-error "symbols-server: %s" error-text))
+       (t
+        (message "symbols-server: cache file invalidated"))))
     response))
 
 ;; ---------------------------------------------------------------------------

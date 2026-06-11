@@ -91,37 +91,54 @@ auto handleRequest(const Request& req, Indexer& indexer, const ServerConfig& con
 
 auto initializeIndex(Indexer& indexer, const ServerConfig& config) -> void
 {
+    dc::Stopwatch timer;
     if (config.useCache && indexer.hasCacheFile(config.projectRoot)) {
         LOG_INFO("Loading index from cache...");
+        dc::Stopwatch loadTimer;
         auto loadResult = indexer.loadCache(config.projectRoot);
+        loadTimer.stop();
         if (loadResult.isOk()) {
-            LOG_INFO("Cache loaded successfully");
+            LOG_INFO("Cache loaded successfully in {:.2f}s", loadTimer.fs());
             // Prune symbols for any files deleted since the cache was written.
             // This is a fast existence-check pass over tracked files only.
             const u64 pruned = indexer.pruneDeletedFiles(config.projectRoot);
             if (pruned > 0 && config.useCache) {
+                dc::Stopwatch saveTimer;
                 auto r = indexer.saveCache(config.projectRoot);
-                if (!r.isOk())
-                    LOG_WARNING("Failed to save cache after pruning deleted files");
+                saveTimer.stop();
+                if (r.isOk())
+                    LOG_INFO("Cache saved after pruning deleted files in {:.2f}s", saveTimer.fs());
+                else
+                    LOG_WARNING("Failed to save cache after pruning deleted files after {:.2f}s", saveTimer.fs());
             }
         } else {
-            LOG_WARNING("Cache load failed, building fresh index");
+            LOG_WARNING("Cache load failed after {:.2f}s, building fresh index", loadTimer.fs());
             indexer.build(config.projectRoot, config.searchDirs, config.diagnostics);
             if (config.useCache) {
+                dc::Stopwatch saveTimer;
                 auto r = indexer.saveCache(config.projectRoot);
-                if (!r.isOk())
-                    LOG_WARNING("Failed to save cache");
+                saveTimer.stop();
+                if (r.isOk())
+                    LOG_INFO("Cache saved in {:.2f}s", saveTimer.fs());
+                else
+                    LOG_WARNING("Failed to save cache after {:.2f}s", saveTimer.fs());
             }
         }
     } else {
         LOG_INFO("Building index...");
         indexer.build(config.projectRoot, config.searchDirs, config.diagnostics);
         if (config.useCache) {
+            dc::Stopwatch saveTimer;
             auto r = indexer.saveCache(config.projectRoot);
-            if (!r.isOk())
-                LOG_WARNING("Failed to save cache");
+            saveTimer.stop();
+            if (r.isOk())
+                LOG_INFO("Cache saved in {:.2f}s", saveTimer.fs());
+            else
+                LOG_WARNING("Failed to save cache after {:.2f}s", saveTimer.fs());
         }
     }
+    timer.stop();
+    LOG_INFO("Index initialization finished in {:.2f}s", timer.fs());
 }
 
 auto runServerLoop(std::istream& in, std::ostream& out, Indexer& indexer, const ServerConfig& config) -> s32

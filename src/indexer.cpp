@@ -94,7 +94,10 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
 
     dc::List<std::filesystem::path> allFiles;
     for (u64 i = 0; i < scanRoots.getSize(); ++i) {
+        dc::Stopwatch scanTimer;
         auto files = scanDirectory(scanRoots[i], extensions, ignoreList);
+        scanTimer.stop();
+        LOG_INFO("Scanned {} files from {} in {:.2f}s", files.getSize(), scanRoots[i].string().c_str(), scanTimer.fs());
         for (u64 j = 0; j < files.getSize(); ++j)
             allFiles.add(dc::move(files[j]));
     }
@@ -140,8 +143,11 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
         } });
     }
 
+    dc::Stopwatch parseTimer;
     if (jobs.getSize() > 0)
         m_jobSystem->add(jobs).await();
+    parseTimer.stop();
+    LOG_INFO("Parsed {} files in {:.2f}s", allFiles.getSize(), parseTimer.fs());
 
     // Sort files by parse time descending and log the top 20.
     if (diagnostics) {
@@ -158,6 +164,7 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
         }
     }
 
+    dc::Stopwatch collectTimer;
     s64 errorCount = 0;
     for (u32 i = 0; i < nFiles; ++i) {
         if (results[i].isOk()) {
@@ -175,6 +182,8 @@ auto Indexer::build(const std::filesystem::path& projectRoot, const dc::List<dc:
             ++errorCount;
         }
     }
+    collectTimer.stop();
+    LOG_INFO("Collected symbols and file records in {:.2f}s", collectTimer.fs());
 
     timer.stop();
     m_ready = true;

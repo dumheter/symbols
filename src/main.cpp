@@ -2,6 +2,7 @@
 #include <dc/log.hpp>
 
 #include <args.hpp>
+#include <logging.hpp>
 #include <server.hpp>
 
 #include <filesystem>
@@ -60,6 +61,13 @@ int main(int argc, char** argv)
 
     // Normalize to absolute path.
     parsed.config.projectRoot = std::filesystem::absolute(parsed.config.projectRoot);
+
+    const auto logResult = symbols::attachFileLogger(symbols::defaultLogDirectory());
+    if (logResult.isOk()) {
+        std::println(stderr, "symbols-server log file: {}", logResult.value().string());
+    } else {
+        std::println(stderr, "Warning: {}", logResult.errValue().c_str());
+    }
 
     if (!std::filesystem::exists(parsed.config.projectRoot)) {
         std::println(stderr, "Error: project root does not exist: {}", parsed.config.projectRoot.string());

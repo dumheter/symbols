@@ -82,6 +82,7 @@ add_executable(${PROJECT_NAME}
     src/scanner.cpp
     src/parser.cpp
     src/indexer.cpp
+    src/logging.cpp
     src/json.cpp
     src/protocol.cpp
     src/server.cpp
@@ -105,6 +106,7 @@ add_executable(test
     tests/json.test.cpp
     tests/parser.test.cpp
     tests/indexer.test.cpp
+    tests/logging.test.cpp
     tests/scanner.test.cpp
     tests/protocol.test.cpp
     tests/server.test.cpp
@@ -115,6 +117,7 @@ add_executable(test
     src/scanner.cpp
     src/parser.cpp
     src/indexer.cpp
+    src/logging.cpp
     src/json.cpp
     src/protocol.cpp
     src/server.cpp
