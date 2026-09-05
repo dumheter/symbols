@@ -19,4 +19,8 @@ emacs/deploy.local
 
 # local build and cache output
 .cache/
+
+# local editor state
+.projectile-cache.eld
+.claude/
 build/
