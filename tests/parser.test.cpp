@@ -563,17 +563,41 @@ public:
 }
 )");
 
+    bool foundClass = false;
     bool foundGetTopRewards = false;
     bool foundFetchTopRewards = false;
     for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "ClientCompetitiveRankInterface" && symbols[i].kind == SymbolKind::Class)
+            foundClass = true;
         if (symbols[i].name == "getTopRewards" && symbols[i].kind == SymbolKind::Function)
             foundGetTopRewards = true;
         if (symbols[i].name == "fetchTopRewards" && symbols[i].kind == SymbolKind::Function)
             foundFetchTopRewards = true;
     }
 
+    ASSERT_TRUE(foundClass);
     ASSERT_TRUE(foundGetTopRewards);
     ASSERT_TRUE(foundFetchTopRewards);
+}
+
+DTEST(parseMacroDecoratedStruct)
+{
+    const auto symbols = parseSourceString(R"(
+struct EXAMPLE_API ExportedData
+{
+    int value;
+};
+)");
+
+    bool found = false;
+    for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "ExportedData" && symbols[i].kind == SymbolKind::Struct) {
+            found = true;
+            break;
+        }
+    }
+
+    ASSERT_TRUE(found);
 }
 
 // ---------------------------------------------------------------------------

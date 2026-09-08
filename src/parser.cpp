@@ -99,8 +99,16 @@ static constexpr const char* kCppSymbolQuery = R"(
 (class_specifier
   name: (type_identifier) @class)
 
+(function_definition
+  type: (class_specifier)
+  declarator: (identifier) @class)
+
 (struct_specifier
   name: (type_identifier) @struct)
+
+(function_definition
+  type: (struct_specifier)
+  declarator: (identifier) @struct)
 
 (template_declaration
   (class_specifier
