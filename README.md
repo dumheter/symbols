@@ -174,7 +174,7 @@ All communication is line-delimited JSON on stdin/stdout.
 ### Requests (Emacs → server)
 
 ```json
-{"id":1,"method":"query","params":{"pattern":"StatCateg","limit":200}}
+{"id":1,"method":"query","params":{"pattern":"StatCateg f:.cpp","limit":200}}
 {"id":2,"method":"status"}
 {"id":3,"method":"rebuild"}
 {"id":4,"method":"rebuildFile","params":{"file":"/abs/path/to/file.cpp"}}
@@ -192,8 +192,13 @@ All communication is line-delimited JSON on stdin/stdout.
 {"id":5,"status":"shutdown"}
 ```
 
-`score` is the fuzzy-match score: exact name match = 1000, prefix = 500+,
-subsequence with word-boundary bonuses = lower values.
+`score` is the fuzzy-match score for the symbol name: exact match = 1000,
+prefix = 500+, subsequence with word-boundary bonuses = lower values.
+Space-separated `f:fragment` tokens restrict results to files whose relative
+path contains the fragment (case-insensitive, literal substring).  File
+filters are applied before the result limit; multiple `f:` tokens all have to
+match.  Without `f:`, all input is matched against symbol names (except known
+kind tokens such as `class` or `function`).
 
 ---
 
@@ -226,6 +231,15 @@ or restart Emacs.
 name; the server does the fuzzy filtering and returns the top 200 matches.
 Hovering over a candidate previews the file; `RET` jumps there (pushing an
 xref marker so `M-,` returns you).
+
+To narrow a symbol search by filename or relative path, add `f:` followed
+by a fragment, separated by a space: `addPendingObject f:.cpp` finds matching
+symbols only in `.cpp` files.  `f:PersistenceStreamManager.cpp` narrows to
+that file.  Fragments are case-insensitive literal substrings, so `.cpp`
+matches the extension rather than a fuzzy sequence of path characters.
+You can also search files alone with `f:.cpp`, or combine filters such as
+`addPendingObject f:Networking f:.cpp`.  Plain words (including those
+containing `.` or `/`) search symbol names, not filenames.
 
 `C-u M-s M-s` triggers a manual incremental reindex before searching.
 

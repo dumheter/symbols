@@ -998,11 +998,11 @@ DTEST(multiTokenKindFilterTypedef)
 
 DTEST(multiTokenFileFilter)
 {
-    // "SearchResult indexer.hpp" — file filter restricts to indexer.hpp;
+    // "SearchResult f:indexer.hpp" — file filter restricts to indexer.hpp;
     // the SearchResult struct lives there so it must appear.
     const auto& indexer = sharedIndexer();
 
-    const auto results = indexer.search(dc::StringView("SearchResult indexer.hpp"), 50);
+    const auto results = indexer.search(dc::StringView("SearchResult f:indexer.hpp"), 50);
     ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
     ASSERT_TRUE(hasResult(results, "SearchResult"));
     ASSERT_TRUE(allFileContains(results, "indexer"));
@@ -1010,19 +1010,19 @@ DTEST(multiTokenFileFilter)
 
 DTEST(multiTokenFileFilterExcludesWrongFile)
 {
-    // "SearchResult server.hpp" — SearchResult is not in server.hpp, must return nothing.
+    // SearchResult is not in server.hpp, so the file filter excludes it.
     const auto& indexer = sharedIndexer();
 
-    const auto results = indexer.search(dc::StringView("SearchResult server.hpp"), 50);
+    const auto results = indexer.search(dc::StringView("SearchResult f:server.hpp"), 50);
     ASSERT_FALSE(hasResult(results, "SearchResult"));
 }
 
 DTEST(multiTokenFileFilterByDir)
 {
-    // "ServerConfig src/" — all results must come from files under src/.
+    // All results must come from files under src/.
     const auto& indexer = sharedIndexer();
 
-    const auto results = indexer.search(dc::StringView("ServerConfig src/"), 50);
+    const auto results = indexer.search(dc::StringView("ServerConfig f:src/"), 50);
     ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
     ASSERT_TRUE(hasResult(results, "ServerConfig"));
     ASSERT_TRUE(allFileContains(results, "src/"));
@@ -1030,11 +1030,11 @@ DTEST(multiTokenFileFilterByDir)
 
 DTEST(multiTokenKindAndFileFilter)
 {
-    // "struct indexer.hpp" — only structs from files matching "indexer.hpp":
+    // "struct f:indexer.hpp" — only structs from files matching "indexer.hpp":
     // SearchResult and FileRecord both live in src/indexer.hpp.
     const auto& indexer = sharedIndexer();
 
-    const auto results = indexer.search(dc::StringView("struct indexer.hpp"), 50);
+    const auto results = indexer.search(dc::StringView("struct f:indexer.hpp"), 50);
     ASSERT_TRUE(results.getSize() >= static_cast<u64>(2));
     ASSERT_TRUE(hasResult(results, "SearchResult"));
     ASSERT_TRUE(hasResult(results, "FileRecord"));
@@ -1059,13 +1059,12 @@ DTEST(multiTokenOrderIndependentKindFirst)
 
 DTEST(multiTokenOrderIndependentFileFirst)
 {
-    // "indexer.hpp SearchResult struct", "struct SearchResult indexer.hpp",
-    // and "SearchResult indexer.hpp struct" must all produce the same results.
+    // File, name and kind tokens can be in any order.
     const auto& indexer = sharedIndexer();
 
-    const auto a = indexer.search(dc::StringView("indexer.hpp SearchResult struct"), 50);
-    const auto b = indexer.search(dc::StringView("struct SearchResult indexer.hpp"), 50);
-    const auto c = indexer.search(dc::StringView("SearchResult indexer.hpp struct"), 50);
+    const auto a = indexer.search(dc::StringView("f:indexer.hpp SearchResult struct"), 50);
+    const auto b = indexer.search(dc::StringView("struct SearchResult f:indexer.hpp"), 50);
+    const auto c = indexer.search(dc::StringView("SearchResult f:indexer.hpp struct"), 50);
 
     ASSERT_EQ(a.getSize(), b.getSize());
     ASSERT_EQ(a.getSize(), c.getSize());
@@ -1088,11 +1087,11 @@ DTEST(multiTokenKindOnlyNoNameToken)
 
 DTEST(multiTokenFileOnlyNoNameToken)
 {
-    // "parser.hpp" alone returns all symbols from files matching "parser.hpp";
+    // "f:parser.hpp" alone returns all symbols from files matching "parser.hpp";
     // that must include at least Parser (class) and SymbolKind (enum).
     const auto& indexer = sharedIndexer();
 
-    const auto results = indexer.search(dc::StringView("parser.hpp"), 200);
+    const auto results = indexer.search(dc::StringView("f:parser.hpp"), 200);
     ASSERT_TRUE(results.getSize() >= static_cast<u64>(2));
     ASSERT_TRUE(hasResult(results, "Parser"));
     ASSERT_TRUE(hasResult(results, "SymbolKind"));
@@ -1106,4 +1105,76 @@ DTEST(multiTokenKindFilterExcludesNonMatching)
 
     const auto results = indexer.search(dc::StringView("SearchResult class"), 50);
     ASSERT_EQ(results.getSize(), static_cast<u64>(0));
+}
+
+DTEST(fileFilterMatchesExtensionAndCase)
+{
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("symbolKindToString f:.CPP"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(hasResult(results, "symbolKindToString"));
+    ASSERT_TRUE(allFileContains(results, ".cpp"));
+}
+
+DTEST(fileFilterWorksWithoutSymbolName)
+{
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("f:.cpp"), 50);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(allFileContains(results, ".cpp"));
+}
+
+DTEST(fileFilterMatchesFilenameWithoutExtension)
+{
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("SearchResult f:INDEXER"), 50);
+    ASSERT_TRUE(hasResult(results, "SearchResult"));
+    ASSERT_TRUE(allFileContains(results, "indexer"));
+}
+
+DTEST(fileFilterRequiresLiteralSubstring)
+{
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("SearchResult f:.cpp"), 50);
+    ASSERT_FALSE(hasResult(results, "SearchResult"));
+}
+
+DTEST(fileFilterCombinesMultipleFragments)
+{
+    const auto& indexer = sharedIndexer();
+
+    const auto results = indexer.search(dc::StringView("SearchResult f:src/ f:.hpp"), 50);
+    ASSERT_TRUE(hasResult(results, "SearchResult"));
+    ASSERT_TRUE(allFileContains(results, ".hpp"));
+    ASSERT_EQ(indexer.search(dc::StringView("SearchResult f:src/ f:.cpp"), 50).getSize(), static_cast<u64>(0));
+}
+
+DTEST(fileFilterOnlyAfterPrefix)
+{
+    const auto& indexer = sharedIndexer();
+
+    ASSERT_FALSE(hasResult(indexer.search(dc::StringView("SearchResult indexer.hpp"), 50), "SearchResult"));
+    ASSERT_EQ(indexer.search(dc::StringView("f:"), 200).getSize(), static_cast<u64>(0));
+    ASSERT_TRUE(hasResult(indexer.search(dc::StringView("SearchResult f:"), 50), "SearchResult"));
+}
+
+DTEST(fileFilterAppliedBeforeLimit)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_file_filter_limit";
+    std::filesystem::create_directories(tempDir);
+    writeTempFile(tempDir / "alpha.cpp", "void addPendingObject() {}");
+    writeTempFile(tempDir / "target.cpp", "void addPendingObject() {}");
+
+    Indexer indexer(sharedJobSystem());
+    indexer.build(tempDir);
+
+    const auto results = indexer.search(dc::StringView("addPendingObject f:target.cpp"), 1);
+    ASSERT_EQ(results.getSize(), static_cast<u64>(1));
+    ASSERT_TRUE(results[0].symbol->file == "target.cpp");
+
+    std::filesystem::remove_all(tempDir);
 }

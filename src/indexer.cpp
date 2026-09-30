@@ -642,17 +642,6 @@ auto Indexer::hasCacheFile(const std::filesystem::path& projectRoot) const -> bo
 // Fuzzy matching and search
 // ============================================================================
 
-/// Check whether a character suggests a token is a file path (not a name/kind token).
-static auto isFileToken(dc::StringView token) -> bool
-{
-    for (u64 i = 0; i < token.getSize(); ++i) {
-        const char c = token[i];
-        if (c == '/' || c == '\\' || c == '.')
-            return true;
-    }
-    return false;
-}
-
 /// Case-insensitive equality for two StringViews.
 static auto equalsIgnoreCase(dc::StringView a, dc::StringView b) -> bool
 {
@@ -664,6 +653,18 @@ static auto equalsIgnoreCase(dc::StringView a, dc::StringView b) -> bool
             return false;
     }
     return true;
+}
+
+/// Match a filename or path fragment without treating punctuation as fuzzy-match characters.
+static auto containsIgnoreCase(dc::StringView path, dc::StringView fragment) -> bool
+{
+    if (fragment.getSize() > path.getSize())
+        return false;
+    for (u64 i = 0; i <= path.getSize() - fragment.getSize(); ++i) {
+        if (equalsIgnoreCase(dc::StringView(path.c_str() + i, fragment.getSize()), fragment))
+            return true;
+    }
+    return false;
 }
 
 /// Map a token to a SymbolKind if it matches a known kind name, otherwise returns nullopt-style via out param.
@@ -807,27 +808,32 @@ auto Indexer::search(dc::StringView pattern, u32 limit) const -> dc::List<Search
     // Parse the pattern into tokens separated by spaces.
     // Each token is classified as:
     //   - A kind filter  : exactly matches a known kind name (struct, class, function, enum, alias, typedef)
-    //   - A file token   : contains '.', '/', or '\' — contributes to a file substring filter
+    //   - A file filter  : starts with "f:" — matches a relative file path
     //   - A name token   : everything else — concatenated to form the name fuzzy query
     const auto tokens = splitOnSpaces(pattern);
 
     bool hasKindFilter = false;
     SymbolKind kindFilter = SymbolKind::Function;
     dc::String nameQuery;
-    dc::String fileQuery; // concatenated file tokens (no separator — fuzzy match)
+    dc::List<dc::String> fileQueries;
 
     for (u64 i = 0; i < tokens.getSize(); ++i) {
         const dc::StringView tok(tokens[i]);
         SymbolKind k = SymbolKind::Function;
-        if (tokenToKind(tok, k)) {
+        if (tok.getSize() > 2 && tok[0] == 'f' && tok[1] == ':') {
+            fileQueries.add(dc::String(tokens[i].c_str() + 2));
+        } else if (tok.getSize() == 2 && tok[0] == 'f' && tok[1] == ':') {
+            continue;
+        } else if (tokenToKind(tok, k)) {
             hasKindFilter = true;
             kindFilter = k;
-        } else if (isFileToken(tok)) {
-            fileQuery += tokens[i];
         } else {
             nameQuery += tokens[i];
         }
     }
+
+    if (!hasKindFilter && nameQuery.getSize() == 0 && fileQueries.getSize() == 0)
+        return matches;
 
     for (u64 i = 0; i < m_symbols.getSize(); ++i) {
         const Symbol& sym = m_symbols[i];
@@ -836,15 +842,16 @@ auto Indexer::search(dc::StringView pattern, u32 limit) const -> dc::List<Search
         if (hasKindFilter && sym.kind != kindFilter)
             continue;
 
-        // File filter — substring match (case-insensitive) on the relative file path.
-        if (fileQuery.getSize() > 0) {
-            const dc::StringView fileSv(sym.file);
-            const dc::StringView fq(fileQuery);
-            // Check whether fq is a subsequence of fileSv (reuse scoreMatch logic).
-            const s32 fileScore = scoreMatch(fileSv, fq);
-            if (fileScore < 0)
-                continue;
+        // Every file fragment must occur in the relative path before applying the result limit.
+        bool fileMatches = true;
+        for (u64 j = 0; j < fileQueries.getSize(); ++j) {
+            if (!containsIgnoreCase(dc::StringView(sym.file), dc::StringView(fileQueries[j]))) {
+                fileMatches = false;
+                break;
+            }
         }
+        if (!fileMatches)
+            continue;
 
         // Name query — fuzzy score.  If nameQuery is empty (user only typed kind/file tokens)
         // we accept all surviving symbols with score 0.

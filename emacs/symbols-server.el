@@ -361,7 +361,9 @@ Orderless highlighting is applied separately after formatting."
   "Apply orderless match highlighting for PATTERN to each string in CANDIDATES.
 Returns a new list of strings with face text properties set."
   (when (and candidates (not (string= pattern "")))
-    (orderless-highlight-matches pattern candidates)))
+    (orderless-highlight-matches
+     (replace-regexp-in-string "\\(^\\|[[:space:]]\\)f:" "\\1" pattern)
+     candidates)))
 
 ;; ---------------------------------------------------------------------------
 ;; Navigation / preview (mirrors treesit-utils behavior)
@@ -641,6 +643,7 @@ The absolute path of the saved file is sent so only that one file is re-parsed."
 ;;;###autoload
 (defun symbols-server-find-symbols (&optional force-rebuild)
   "Browse C++ symbols in the current project using the symbols server.
+Add `f:fragment' to filter by filename or relative path (e.g. `f:.cpp').
 With prefix argument FORCE-REBUILD, trigger an incremental reindex first."
   (interactive "P")
   (let* ((project-root (symbols-server--current-project-root))
@@ -688,7 +691,7 @@ With prefix argument FORCE-REBUILD, trigger an incremental reindex first."
            (selected
             (consult--read
              collection
-             :prompt "C++ Symbol: "
+             :prompt "C++ Symbol (f:file): "
              :category 'cpp-symbol
              :state (symbols-server--make-state-fn project-root)
              :lookup (lambda (selected _candidates _input _narrow)

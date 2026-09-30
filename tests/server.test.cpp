@@ -90,6 +90,25 @@ DTEST(handleRequestQueryEmptyResultsWhenNoMatch)
     ASSERT_EQ(syms->arraySize(), static_cast<usize>(0));
 }
 
+DTEST(handleRequestQueryFiltersFileBeforeLimit)
+{
+    auto& indexer = sharedIndexer();
+    const auto config = sharedConfig();
+
+    const Request req = makeQueryRequest(dc::String("SearchResult f:indexer.hpp"), 1, 1);
+    const dc::String response = handleRequest(req, indexer, config);
+
+    auto parseResult = JsonValue::parse(dc::StringView(response));
+    ASSERT_TRUE(parseResult.isOk());
+    const auto val = dc::move(parseResult).unwrap();
+    ASSERT_EQ(val.getNumber("id"), static_cast<s64>(1));
+    const JsonValue* syms = val.get("symbols");
+    ASSERT_TRUE(syms != nullptr);
+    ASSERT_EQ(syms->arraySize(), static_cast<usize>(1));
+    ASSERT_TRUE(dc::String(syms->at(0).getString("name")) == "SearchResult");
+    ASSERT_TRUE(dc::String(syms->at(0).getString("file")) == "src/indexer.hpp");
+}
+
 DTEST(handleRequestQuerySymbolHasExpectedFields)
 {
     // JsonValue is a real class in src/json.hpp — check all fields are present.
