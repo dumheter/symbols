@@ -29,7 +29,7 @@ static auto parseSourceString(const char* source) -> dc::List<Symbol>
     if (result.isOk()) {
         return dc::move(result).unwrap();
     }
-    return {};
+    return { };
 }
 
 DTEST(parseFunction)
@@ -598,6 +598,37 @@ struct EXAMPLE_API ExportedData
     }
 
     ASSERT_TRUE(found);
+}
+
+DTEST(parseMacroDecoratedInheritedClasses)
+{
+    const auto symbols = parseSourceString(R"(
+class EADPGENERATED_API QuestInstance : public ::eadp::foundation::ProtobufMessage
+{
+};
+
+class QUEST_API ChildQuestInstance : public QuestInstance
+{
+};
+)");
+
+    bool foundQuestInstance = false;
+    bool foundChildQuestInstance = false;
+    bool foundApiMacroAsClass = false;
+    for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "QuestInstance" && symbols[i].kind == SymbolKind::Class)
+            foundQuestInstance = true;
+        if (symbols[i].name == "ChildQuestInstance" && symbols[i].kind == SymbolKind::Class)
+            foundChildQuestInstance = true;
+        if ((symbols[i].name == "EADPGENERATED_API" || symbols[i].name == "QUEST_API")
+            && symbols[i].kind == SymbolKind::Class) {
+            foundApiMacroAsClass = true;
+        }
+    }
+
+    ASSERT_TRUE(foundQuestInstance);
+    ASSERT_TRUE(foundChildQuestInstance);
+    ASSERT_FALSE(foundApiMacroAsClass);
 }
 
 // ---------------------------------------------------------------------------

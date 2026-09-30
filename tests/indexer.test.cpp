@@ -190,6 +190,22 @@ DTEST(loadCacheWithWrongVersionReturnsErr)
     std::filesystem::remove_all(tempDir);
 }
 
+DTEST(loadCacheWithPreviousVersionReturnsErr)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_cache_previous_ver";
+    const auto cacheDir = tempDir / ".cache";
+    std::filesystem::create_directories(cacheDir);
+
+    writeTempFile(cacheDir / "symbols-index.json", R"({"version":2,"symbols":[],"files":[]})");
+
+    Indexer indexer(sharedJobSystem());
+    const auto result = indexer.loadCache(tempDir);
+    ASSERT_FALSE(result.isOk());
+    ASSERT_FALSE(indexer.isReady());
+
+    std::filesystem::remove_all(tempDir);
+}
+
 DTEST(loadCacheWithMissingSymbolsKeyReturnsErr)
 {
     const auto tempDir = std::filesystem::temp_directory_path() / "symbols_cache_no_symbols";
@@ -197,7 +213,7 @@ DTEST(loadCacheWithMissingSymbolsKeyReturnsErr)
     std::filesystem::create_directories(cacheDir);
 
     // Valid JSON, correct version, but no "symbols" array.
-    writeTempFile(cacheDir / "symbols-index.json", R"({"version":2,"files":[]})");
+    writeTempFile(cacheDir / "symbols-index.json", R"({"version":3,"files":[]})");
 
     Indexer indexer(sharedJobSystem());
     const auto result = indexer.loadCache(tempDir);
@@ -213,7 +229,7 @@ DTEST(loadCacheWithEmptySymbolsArraySucceeds)
     const auto cacheDir = tempDir / ".cache";
     std::filesystem::create_directories(cacheDir);
 
-    writeTempFile(cacheDir / "symbols-index.json", R"({"version":2,"symbols":[],"files":[]})");
+    writeTempFile(cacheDir / "symbols-index.json", R"({"version":3,"symbols":[],"files":[]})");
 
     Indexer indexer(sharedJobSystem());
     const auto result = indexer.loadCache(tempDir);
@@ -804,27 +820,19 @@ DTEST(scoreMatchCaseSensitivityBonus)
     std::filesystem::remove_all(tempDir);
 }
 
-DTEST(loadCacheVersionOneLoadsCorrectly)
+DTEST(loadCacheVersionOneReturnsErr)
 {
-    // Version 1 cache has no "files" array. loadCache must still succeed
-    // and populate symbols correctly.
     const auto tempDir = std::filesystem::temp_directory_path() / "symbols_cache_v1";
     const auto cacheDir = tempDir / ".cache";
     std::filesystem::create_directories(cacheDir);
 
-    // Hand-craft a v1 cache with one symbol.
     writeTempFile(cacheDir / "symbols-index.json",
         R"({"version":1,"symbols":[{"n":"legacyFunc","k":"function","f":"old.cpp","l":7}]})");
 
     Indexer indexer(sharedJobSystem());
     const auto result = indexer.loadCache(tempDir);
-    ASSERT_TRUE(result.isOk());
-    ASSERT_TRUE(indexer.isReady());
-    ASSERT_EQ(indexer.symbolCount(), static_cast<usize>(1));
-
-    const auto results = indexer.search(dc::StringView("legacyFunc"), 10);
-    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
-    ASSERT_TRUE(results[0].symbol->name == "legacyFunc");
+    ASSERT_FALSE(result.isOk());
+    ASSERT_FALSE(indexer.isReady());
 
     std::filesystem::remove_all(tempDir);
 }

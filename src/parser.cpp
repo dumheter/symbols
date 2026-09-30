@@ -103,12 +103,38 @@ static constexpr const char* kCppSymbolQuery = R"(
   type: (class_specifier)
   declarator: (identifier) @class)
 
+(declaration
+  type: (class_specifier)
+  (ERROR
+    (identifier) @class)
+  declarator: (init_declarator
+    value: (initializer_list)))
+
+(declaration
+  type: (class_specifier)
+  declarator: (init_declarator
+    declarator: (identifier) @class
+    value: (initializer_list)))
+
 (struct_specifier
   name: (type_identifier) @struct)
 
 (function_definition
   type: (struct_specifier)
   declarator: (identifier) @struct)
+
+(declaration
+  type: (struct_specifier)
+  (ERROR
+    (identifier) @struct)
+  declarator: (init_declarator
+    value: (initializer_list)))
+
+(declaration
+  type: (struct_specifier)
+  declarator: (init_declarator
+    declarator: (identifier) @struct
+    value: (initializer_list)))
 
 (template_declaration
   (class_specifier
@@ -205,7 +231,7 @@ static auto findAncestorDeclaration(TSNode node) -> TSNode
         current = ts_node_parent(current);
     }
 
-    return {};
+    return { };
 }
 
 static auto declarationHasConstexpr(TSNode declaration, const char* source) -> bool
@@ -241,10 +267,20 @@ static auto declarationIsGlobal(TSNode declaration) -> bool
     return true;
 }
 
+static auto declarationIsRecoveredTypeDefinition(TSNode declaration) -> bool
+{
+    const TSNode type = ts_node_child_by_field_name(declaration, "type", 4);
+    return !ts_node_is_null(type)
+        && (nodeTypeEquals(type, "class_specifier") || nodeTypeEquals(type, "struct_specifier"));
+}
+
 static auto shouldIndexVariable(TSNode capturedNode, const char* source) -> bool
 {
     const TSNode declaration = findAncestorDeclaration(capturedNode);
     if (ts_node_is_null(declaration))
+        return false;
+
+    if (declarationIsRecoveredTypeDefinition(declaration))
         return false;
 
     if (declarationHasConstexpr(declaration, source))
@@ -266,11 +302,33 @@ static auto isForwardDeclaration(SymbolKind kind, TSNode capturedNode) -> bool
         return false;
 
     const TSNode parent = ts_node_parent(capturedNode);
-    if (ts_node_is_null(parent))
-        return false;
+    if (!ts_node_is_null(parent)
+        && (nodeTypeEquals(parent, "class_specifier") || nodeTypeEquals(parent, "struct_specifier"))) {
+        const TSNode body = ts_node_child_by_field_name(parent, "body", 4);
+        return ts_node_is_null(body);
+    }
 
-    const TSNode body = ts_node_child_by_field_name(parent, "body", 4);
-    return ts_node_is_null(body);
+    TSNode current = capturedNode;
+    while (!ts_node_is_null(current)) {
+        const TSNode body = ts_node_child_by_field_name(current, "body", 4);
+        if (!ts_node_is_null(body))
+            return false;
+
+        if (nodeTypeEquals(current, "declaration")) {
+            const TSNode declarator = ts_node_child_by_field_name(current, "declarator", 10);
+            if (!ts_node_is_null(declarator) && nodeTypeEquals(declarator, "init_declarator")) {
+                const TSNode value = ts_node_child_by_field_name(declarator, "value", 5);
+                if (!ts_node_is_null(value) && nodeTypeEquals(value, "initializer_list"))
+                    return false;
+            }
+
+            return true;
+        }
+
+        current = ts_node_parent(current);
+    }
+
+    return false;
 }
 
 /// Intermediate capture record used for single-pass line counting.

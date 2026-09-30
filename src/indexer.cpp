@@ -18,6 +18,7 @@ namespace symbols {
 
 static constexpr const char* kCacheDir = ".cache";
 static constexpr const char* kCacheFilename = "symbols-index.json";
+static constexpr s64 kCacheVersion = 3;
 
 static auto cacheFilePath(const std::filesystem::path& projectRoot) -> std::filesystem::path
 {
@@ -473,7 +474,11 @@ auto Indexer::saveCache(const std::filesystem::path& projectRoot) -> dc::Result<
 
     // Build JSON manually for performance.
     dc::String json;
-    json += "{\"version\":2,\"symbols\":[";
+    json += "{\"version\":";
+    char versionBuf[16];
+    std::snprintf(versionBuf, sizeof(versionBuf), "%lld", static_cast<long long>(kCacheVersion));
+    json += versionBuf;
+    json += ",\"symbols\":[";
 
     for (u64 i = 0; i < m_symbols.getSize(); ++i) {
         if (i > 0)
@@ -549,7 +554,7 @@ auto Indexer::loadCache(const std::filesystem::path& projectRoot) -> dc::Result<
     const JsonValue root = dc::move(parseResult).unwrap();
 
     const s64 version = static_cast<s64>(root.getNumber("version"));
-    if (version != 1 && version != 2)
+    if (version != kCacheVersion)
         return dc::Err<dc::String>(dc::String("Unsupported cache version"));
 
     const JsonValue* symbolsArray = root.get("symbols");
@@ -572,7 +577,7 @@ auto Indexer::loadCache(const std::filesystem::path& projectRoot) -> dc::Result<
         m_symbols.add(dc::move(sym));
     }
 
-    // Load file records if present (version 2+).
+    // Load file records.
     const JsonValue* filesArray = root.get("files");
     if (filesArray && filesArray->type() == JsonValue::Type::Array) {
         const usize fileCount = filesArray->arraySize();
