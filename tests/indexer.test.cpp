@@ -196,7 +196,7 @@ DTEST(loadCacheWithPreviousVersionReturnsErr)
     const auto cacheDir = tempDir / ".cache";
     std::filesystem::create_directories(cacheDir);
 
-    writeTempFile(cacheDir / "symbols-index.json", R"({"version":2,"symbols":[],"files":[]})");
+    writeTempFile(cacheDir / "symbols-index.json", R"({"version":3,"symbols":[],"files":[]})");
 
     Indexer indexer(sharedJobSystem());
     const auto result = indexer.loadCache(tempDir);
@@ -213,7 +213,7 @@ DTEST(loadCacheWithMissingSymbolsKeyReturnsErr)
     std::filesystem::create_directories(cacheDir);
 
     // Valid JSON, correct version, but no "symbols" array.
-    writeTempFile(cacheDir / "symbols-index.json", R"({"version":3,"files":[]})");
+    writeTempFile(cacheDir / "symbols-index.json", R"({"version":4,"files":[]})");
 
     Indexer indexer(sharedJobSystem());
     const auto result = indexer.loadCache(tempDir);
@@ -229,7 +229,7 @@ DTEST(loadCacheWithEmptySymbolsArraySucceeds)
     const auto cacheDir = tempDir / ".cache";
     std::filesystem::create_directories(cacheDir);
 
-    writeTempFile(cacheDir / "symbols-index.json", R"({"version":3,"symbols":[],"files":[]})");
+    writeTempFile(cacheDir / "symbols-index.json", R"({"version":4,"symbols":[],"files":[]})");
 
     Indexer indexer(sharedJobSystem());
     const auto result = indexer.loadCache(tempDir);

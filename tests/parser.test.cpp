@@ -156,6 +156,50 @@ void Foo::bar() {}
     ASSERT_TRUE(found);
 }
 
+DTEST(parsePointerReturningQualifiedMethod)
+{
+    const auto symbols = parseSourceString(R"(
+class AwardDefinitionRepository {
+    const dicePersistence::AwardDefinition* findAwardDefinition(QuestIdHash questIdHash) const;
+};
+
+const dicePersistence::AwardDefinition* AwardDefinitionRepository::findAwardDefinition(QuestIdHash questIdHash) const
+{
+    return nullptr;
+}
+
+const dicePersistence::AwardDefinition* lookupAwardDefinition(QuestIdHash questIdHash);
+
+eastl::optional<AwardDefinitionRepository::AwardDefinitionIndex> AwardDefinitionRepository::findAwardDefinitionIndex(QuestIdHash questIdHash) const
+{
+    return {};
+}
+)");
+
+    bool foundDeclaration = false;
+    bool foundDefinition = false;
+    bool foundFreeDeclaration = false;
+    bool foundIndex = false;
+    for (u64 i = 0; i < symbols.getSize(); ++i) {
+        if (symbols[i].name == "findAwardDefinition" && symbols[i].kind == SymbolKind::Function
+            && symbols[i].line == static_cast<u32>(3))
+            foundDeclaration = true;
+        if (symbols[i].name == "AwardDefinitionRepository::findAwardDefinition"
+            && symbols[i].kind == SymbolKind::Function && symbols[i].line == static_cast<u32>(6))
+            foundDefinition = true;
+        if (symbols[i].name == "lookupAwardDefinition" && symbols[i].kind == SymbolKind::Function)
+            foundFreeDeclaration = true;
+        if (symbols[i].name == "AwardDefinitionRepository::findAwardDefinitionIndex"
+            && symbols[i].kind == SymbolKind::Function)
+            foundIndex = true;
+    }
+
+    ASSERT_TRUE(foundDeclaration);
+    ASSERT_TRUE(foundDefinition);
+    ASSERT_TRUE(foundFreeDeclaration);
+    ASSERT_TRUE(foundIndex);
+}
+
 DTEST(parseMultipleSymbols)
 {
     const auto symbols = parseSourceString(R"(

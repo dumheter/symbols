@@ -425,6 +425,33 @@ DTEST(initializeIndexFallsBackToBuildOnCorruptCache)
     std::filesystem::remove_all(tempDir);
 }
 
+DTEST(initializeIndexRebuildsAfterParserChange)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "symbols_server_parser_cache";
+    const auto cacheDir = tempDir / ".cache";
+    std::filesystem::create_directories(cacheDir);
+    writeTempFile(tempDir / "award.cpp",
+        "const Award* AwardDefinitionRepository::findAwardDefinition(QuestIdHash questIdHash) const { return nullptr; "
+        "}");
+    writeTempFile(cacheDir / "symbols-index.json", R"({"version":3,"symbols":[],"files":[]})");
+
+    ServerConfig config;
+    config.projectRoot = tempDir;
+    config.useCache = true;
+
+    Indexer indexer(sharedJobSystem());
+    initializeIndex(indexer, config);
+
+    const auto results = indexer.search(dc::StringView("findAwardDefinition"), 10);
+    ASSERT_TRUE(results.getSize() >= static_cast<u64>(1));
+    ASSERT_TRUE(results[0].symbol->name == "AwardDefinitionRepository::findAwardDefinition");
+
+    Indexer reloaded(sharedJobSystem());
+    ASSERT_TRUE(reloaded.loadCache(tempDir).isOk());
+
+    std::filesystem::remove_all(tempDir);
+}
+
 DTEST(initializeIndexFirstRunCreatesCacheFile)
 {
     // useCache=true but no cache file exists yet.

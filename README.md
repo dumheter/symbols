@@ -12,7 +12,8 @@ JSON-over-stdio protocol.
 - Walks a project directory (or a configurable sub-tree) and extracts every
   function, class, struct, enum, `using` alias, and typedef.
 - Caches the index to `<project_root>/.cache/symbols-index.json` so cold
-  restarts are fast.
+  restarts are fast. Parser updates that change extracted symbols invalidate
+  older cache versions and rebuild the index on the next server start.
 - Stays alive as a persistent subprocess; Emacs sends a query line and gets
   back a ranked result list in milliseconds.
 - The Emacs client (`symbols-server.el`) wires this into `consult` so the

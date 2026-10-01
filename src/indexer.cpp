@@ -18,7 +18,7 @@ namespace symbols {
 
 static constexpr const char* kCacheDir = ".cache";
 static constexpr const char* kCacheFilename = "symbols-index.json";
-static constexpr s64 kCacheVersion = 3;
+static constexpr s64 kCacheVersion = 4;
 
 static auto cacheFilePath(const std::filesystem::path& projectRoot) -> std::filesystem::path
 {
